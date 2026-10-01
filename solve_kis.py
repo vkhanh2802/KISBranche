@@ -1,4 +1,6 @@
 from collections import defaultdict
+import math
+
 from apply_object_filter import apply_object_filter 
 
 def multi_query_search(query_variants, encoder, retriever, top_k=50):
@@ -40,6 +42,44 @@ def normalize_scores(results):
         else:
             item["norm_score"] = (item["score"] - min_score) / (max_score - min_score)
     return results
+
+
+def finalize_vlm_ranking(candidates, top_k=20, vlm_weight=0.5):
+    """Combine available VLM scores with retrieval scores and rank globally."""
+    if not 0.0 <= vlm_weight <= 1.0:
+        raise ValueError("vlm_weight must be between 0 and 1")
+
+    rerank_candidates = candidates[:top_k]
+    scored_candidates = []
+
+    for candidate in candidates:
+        candidate["final_score"] = float(candidate["score"])
+
+    for candidate in rerank_candidates:
+        raw_score = candidate.get("vlm_raw_score")
+        if isinstance(raw_score, (int, float)) and math.isfinite(raw_score):
+            scored_candidates.append((candidate, max(0.0, min(10.0, float(raw_score)))))
+
+    vlm_scores = [score for _, score in scored_candidates]
+    if len(vlm_scores) < 2 or max(vlm_scores) - min(vlm_scores) < 1e-6:
+        return sorted(candidates, key=lambda x: x["final_score"], reverse=True), False
+
+    for candidate, raw_score in scored_candidates:
+        retrieval_score = max(0.0, min(1.0, float(candidate["score"])))
+        vlm_delta = (raw_score / 10.0) - 0.5
+
+        if vlm_delta >= 0.0:
+            final_score = retrieval_score + (
+                2.0 * vlm_weight * vlm_delta * (1.0 - retrieval_score)
+            )
+        else:
+            final_score = retrieval_score + (
+                2.0 * vlm_weight * vlm_delta * retrieval_score
+            )
+
+        candidate["final_score"] = final_score
+
+    return sorted(candidates, key=lambda x: x["final_score"], reverse=True), True
 
 def static_weight_fusion_3_way(visual_results, bm25_results, semantic_results, w_visual=0.5, w_bm25=0.2, w_semantic=0.3):
     """Dung hợp 3 luồng: Hình ảnh (CLIP/SigLIP), Từ khóa (BM25) và Ngữ nghĩa (Caption)"""

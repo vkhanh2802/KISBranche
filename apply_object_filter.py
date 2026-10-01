@@ -1,4 +1,53 @@
-def apply_object_filter(candidates, entities, object_lookup):
+import re
+
+
+DEFAULT_MIN_CONFIDENCE = 0.2
+DEFAULT_OBJECT_WEIGHT = 0.15
+
+OBJECT_ALIASES = {
+    "photo": {"photo", "photograph", "picture", "picture frame", "poster"},
+    "painting": {"painting", "picture", "picture frame", "poster"},
+    "bức ảnh": {"photo", "photograph", "picture", "picture frame"},
+    "tranh": {"painting", "picture", "picture frame", "poster"},
+    "artisan hand": {"hand", "human hand"},
+    "bàn tay nghệ nhân": {"hand", "human hand"},
+}
+
+
+def _normalize_label(value):
+    value = re.sub(r"[^\w\s]", " ", str(value).casefold())
+    return " ".join(value.split())
+
+
+def _detector_labels(entity):
+    explicit_labels = entity.get("detector_labels", [])
+    if isinstance(explicit_labels, str):
+        explicit_labels = [explicit_labels]
+
+    value_parts = re.split(
+        r"\s*/\s*|\s+or\s+|\s+hoặc\s+",
+        str(entity.get("value", "")),
+        flags=re.IGNORECASE,
+    )
+    labels = {
+        normalized
+        for value in [*explicit_labels, *value_parts]
+        if (normalized := _normalize_label(value))
+    }
+
+    for label in list(labels):
+        labels.update(OBJECT_ALIASES.get(label, ()))
+
+    return labels
+
+
+def apply_object_filter(
+    candidates,
+    entities,
+    object_lookup,
+    min_confidence=DEFAULT_MIN_CONFIDENCE,
+    object_weight=DEFAULT_OBJECT_WEIGHT,
+):
     object_entities = [e for e in entities if e.get("type") == "object"]
 
     if not object_entities:
@@ -8,50 +57,51 @@ def apply_object_filter(candidates, entities, object_lookup):
 
     for candidate in candidates:
         key = (candidate["video_id"], candidate["frame_id"])
+        retrieval_score = candidate["score"]
+        candidate["retrieval_score"] = retrieval_score
         meta = object_lookup.get(key)
 
         if meta is None:
             candidate["object_score"] = 0.0
             continue
 
-        detected = [
-            str(x).lower()
-            for x in meta.get("detection_class_entities", [])
-        ]
+        detected = {}
+        for label, raw_confidence in zip(
+            meta.get("detection_class_entities", []),
+            meta.get("detection_scores", []),
+        ):
+            try:
+                confidence = float(raw_confidence)
+            except (TypeError, ValueError):
+                continue
+
+            if confidence < min_confidence:
+                continue
+
+            label = _normalize_label(label)
+            detected[label] = max(confidence, detected.get(label, 0.0))
 
         score = 0.0
         total = 0.0
 
         for entity in object_entities:
-            value = entity.get("value", "").lower()
-            attributes = entity.get("attributes", {})
-
-            if not value:
+            detector_labels = _detector_labels(entity)
+            if not detector_labels:
                 continue
 
             total += 1
-
-            count = detected.count(value)
-
-            if count == 0:
-                continue
-
-            score += 1.0
-
-            quantity = attributes.get("quantity")
-
-            if quantity == "many":
-                if count >= 2:
-                    score += 0.5
+            score += max(
+                (detected.get(label, 0.0) for label in detector_labels),
+                default=0.0,
+            )
 
         candidate["object_score"] = score / total if total else 0.0
+        candidate["score"] = retrieval_score + (
+            object_weight
+            * candidate["object_score"]
+            * max(0.0, 1.0 - retrieval_score)
+        )
 
-    candidates.sort(
-        key=lambda x: (
-            x.get("object_score", 0.0),
-            x["score"]
-        ),
-        reverse=True
-    )
+    candidates.sort(key=lambda x: x["score"], reverse=True)
 
     return candidates

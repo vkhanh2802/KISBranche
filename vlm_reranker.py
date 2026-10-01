@@ -152,10 +152,10 @@ Return ONLY a single number from 0 to 10, with no other text.
                 or self.processor.tokenizer.eos_token_id,
             )
         except torch.cuda.OutOfMemoryError:
-            print("[VLM] OOM khi generate, giải phóng cache và trả về 0.0")
+            print("[VLM] OOM khi generate, giải phóng cache và bỏ qua candidate")
             torch.cuda.empty_cache()
             gc.collect()
-            return 0.0
+            return None
 
         generated_ids = [
             output_ids[i][inputs["input_ids"].shape[1]:]
@@ -179,7 +179,7 @@ Return ONLY a single number from 0 to 10, with no other text.
         return score
 
     @staticmethod
-    def _parse_score(response: str) -> float:
+    def _parse_score(response: str):
         """Parse số điểm từ output của model một cách bền hơn.
 
         Model đôi khi trả thêm text/markdown dù đã prompt "ONLY a
@@ -188,6 +188,6 @@ Return ONLY a single number from 0 to 10, with no other text.
         """
         match = re.search(r"-?\d+(\.\d+)?", response)
         if match is None:
-            return 0.0
+            return None
         score = float(match.group())
         return max(0.0, min(10.0, score))
