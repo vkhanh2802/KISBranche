@@ -9,7 +9,7 @@ class ObjectMetadataLookup:
         self.data_dir = data_dir
         self.csv_cache = {}
 
-    def _get_keyframe_n(self, video_id, frame_id):
+    def get_keyframe_n(self, video_id, frame_id):
         if video_id not in self.csv_cache:
             csv_path = video_csv_path(video_id)
 
@@ -36,7 +36,7 @@ class ObjectMetadataLookup:
                     "or a 2-item tuple/list key."
                 )
 
-        n = self._get_keyframe_n(video_id, frame_id)
+        n = self.get_keyframe_n(video_id, frame_id)
 
         if n is None:
             return None

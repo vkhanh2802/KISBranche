@@ -168,11 +168,27 @@ class CaptionRetriever:
 
                 item = self.mapping[idx]
 
-            results.append({
+            result = {
                 "video_id": item["video_id"],
                 "frame_id": int(item["frame_id"]),
                 "score": float(score)
-            })
+            }
+            for field in ("keyframe_n", "image_path"):
+                if item.get(field) is not None:
+                    result[field] = item[field]
+
+            if idx < len(self.caption_data):
+                caption_item = self.caption_data[idx]
+                if (
+                    caption_item.get("video_id") == result["video_id"]
+                    and int(caption_item.get("frame_id", -1)) == result["frame_id"]
+                ):
+                    result["retrieval_text"] = caption_item.get(
+                        "retrieval_text",
+                        caption_item.get("caption", ""),
+                    )
+
+            results.append(result)
 
         return results
 

@@ -7,7 +7,9 @@ Data:
     - Clip-features
     All of those data are provided by AIC
 Operation:
-    - Setup a docker storage suitable with build_mivus.py 
+    - Setup a Milvus instance at http://localhost:19530
+    - Create the initial collection with `python build_milvus.py build`
+    - Replace an existing collection safely with `python build_milvus.py rebuild`
     - Generate caption for each keyframe by caption_generator.py
     - Generate caption index and mapping by build_caption_index.py
     - Run all branch in notebook runbranch.py

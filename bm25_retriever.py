@@ -35,11 +35,15 @@ class BM25Retriever:
             score = float(scores[idx])
             if score > 0: # Chỉ lấy những frame có ít nhất 1 từ khóa trùng khớp
                 item = self.caption_data[idx]
-                results.append({
+                result = {
                     "video_id": item["video_id"],
                     "frame_id": item["frame_id"],
                     "score": score,
                     "retrieval_text": item.get("retrieval_text", "")
-                })
+                }
+                for field in ("keyframe_n", "image_path"):
+                    if item.get(field) is not None:
+                        result[field] = item[field]
+                results.append(result)
                 
         return results
