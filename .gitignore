@@ -1,0 +1,44 @@
+# Python / Conda
+__pycache__/
+*.py[cod]
+*$py.class
+.venv/
+env/
+venv/
+.env
+.pytest_cache/
+.ruff_cache/
+.codex_tmp/
+.pytest_tmp/
+
+# Jupyter Notebook cache
+.ipynb_checkpoints
+
+# Dataset and generated retrieval artifacts
+/data/
+/objects/
+/mapping/
+/clip-features-32/
+/caption_generator/
+/caption_mapping/
+/index/
+
+# Generated data and model files
+*.csv
+*.npy
+*.index
+*.faiss
+*.pkl
+*.mp4
+*.avi
+*.h5
+*.mat
+*.pth
+*.pt
+*.onnx
+*.safetensors
+*.bin
+
+# IDE
+.vscode/
+.idea/
