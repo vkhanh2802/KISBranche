@@ -1,17 +1,19 @@
 import os
 import json
+from pathlib import Path
 import pandas as pd
-from paths import DATA_DIR, MAPPING_DIR, video_csv_path, video_object_dir
+from paths import MAPPING_DIR, OBJECTS_DIR
 
 
 class ObjectMetadataLookup:
-    def __init__(self, data_dir=DATA_DIR):
-        self.data_dir = data_dir
+    def __init__(self, mapping_dir=MAPPING_DIR, objects_dir=OBJECTS_DIR):
+        self.mapping_dir = Path(mapping_dir)
+        self.objects_dir = Path(objects_dir)
         self.csv_cache = {}
 
     def get_keyframe_n(self, video_id, frame_id):
         if video_id not in self.csv_cache:
-            csv_path = video_csv_path(video_id)
+            csv_path = self.mapping_dir / f"{video_id}.csv"
 
             if not os.path.exists(csv_path):
                 return None
@@ -41,7 +43,7 @@ class ObjectMetadataLookup:
         if n is None:
             return None
 
-        json_path = video_object_dir(video_id) / f"{n:03d}.json"
+        json_path = self.objects_dir / video_id / f"{n:03d}.json"
 
         if not os.path.exists(json_path):
             return None

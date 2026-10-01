@@ -1,4 +1,5 @@
 import re
+import math
 
 
 DEFAULT_MIN_CONFIDENCE = 0.2
@@ -48,6 +49,11 @@ def apply_object_filter(
     min_confidence=DEFAULT_MIN_CONFIDENCE,
     object_weight=DEFAULT_OBJECT_WEIGHT,
 ):
+    if not 0.0 <= min_confidence <= 1.0:
+        raise ValueError("min_confidence must be between 0 and 1")
+    if not 0.0 <= object_weight <= 1.0:
+        raise ValueError("object_weight must be between 0 and 1")
+
     object_entities = [e for e in entities if e.get("type") == "object"]
 
     if not object_entities:
@@ -57,8 +63,11 @@ def apply_object_filter(
 
     for candidate in candidates:
         key = (candidate["video_id"], candidate["frame_id"])
-        retrieval_score = candidate["score"]
-        candidate["retrieval_score"] = retrieval_score
+        retrieval_score = float(
+            candidate.setdefault("retrieval_score", candidate["score"])
+        )
+        if not math.isfinite(retrieval_score):
+            raise ValueError(f"Non-finite retrieval score for {key}")
         meta = object_lookup.get(key)
 
         if meta is None:
@@ -75,8 +84,9 @@ def apply_object_filter(
             except (TypeError, ValueError):
                 continue
 
-            if confidence < min_confidence:
+            if not math.isfinite(confidence) or confidence < min_confidence:
                 continue
+            confidence = min(1.0, max(0.0, confidence))
 
             label = _normalize_label(label)
             detected[label] = max(confidence, detected.get(label, 0.0))

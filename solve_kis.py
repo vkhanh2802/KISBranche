@@ -37,7 +37,9 @@ def reciprocal_rank_fusion(multi_results, k=60):
 def normalize_scores(results):
     """Bắt buộc chuẩn hóa điểm số về [0, 1] trước khi Fusion tĩnh"""
     if not results: return []
-    scores = [x["score"] for x in results]
+    scores = [float(x["score"]) for x in results]
+    if not all(math.isfinite(score) for score in scores):
+        raise ValueError("Retrieval results contain non-finite scores")
     min_score, max_score = min(scores), max(scores)
     for item in results:
         if max_score == min_score:
@@ -56,7 +58,10 @@ def finalize_vlm_ranking(candidates, top_k=20, vlm_weight=0.5):
     scored_candidates = []
 
     for candidate in candidates:
-        candidate["final_score"] = float(candidate["score"])
+        retrieval_score = float(candidate["score"])
+        if not math.isfinite(retrieval_score):
+            raise ValueError("Candidate contains a non-finite retrieval score")
+        candidate["final_score"] = retrieval_score
 
     for candidate in rerank_candidates:
         raw_score = candidate.get("vlm_raw_score")
@@ -86,6 +91,11 @@ def finalize_vlm_ranking(candidates, top_k=20, vlm_weight=0.5):
 
 def static_weight_fusion_3_way(visual_results, bm25_results, semantic_results, w_visual=0.5, w_bm25=0.2, w_semantic=0.3):
     """Dung hợp 3 luồng: Hình ảnh (CLIP/SigLIP), Từ khóa (BM25) và Ngữ nghĩa (Caption)"""
+    weights = (w_visual, w_bm25, w_semantic)
+    if not all(math.isfinite(weight) and weight >= 0.0 for weight in weights):
+        raise ValueError("Fusion weights must be finite and non-negative")
+    if not math.isclose(sum(weights), 1.0, abs_tol=1e-9):
+        raise ValueError("Fusion weights must sum to 1")
     print(
         f"[Fusion] Weights: Visual={w_visual}, "
         f"BM25={w_bm25}, Semantic={w_semantic}"

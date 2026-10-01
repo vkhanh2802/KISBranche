@@ -1,5 +1,6 @@
 import argparse
 from datetime import datetime, timezone
+import json
 from pathlib import Path
 from uuid import uuid4
 
@@ -7,6 +8,7 @@ import numpy as np
 import pandas as pd
 from pymilvus import MilvusClient, DataType
 
+from model_config import VISUAL_CONFIG, milvus_model_properties
 from paths import CLIP_FEATURES_DIR, MAPPING_DIR
 
 CLIP_DIR = CLIP_FEATURES_DIR
@@ -14,7 +16,7 @@ CSV_DIR = MAPPING_DIR
 
 MILVUS_URI = "http://localhost:19530"
 COLLECTION_NAME = "clip_keyframes"
-EMBEDDING_DIM = 768
+EMBEDDING_DIM = int(VISUAL_CONFIG["dimension"])
 VALID_MODES = ("build", "rebuild")
 
 
@@ -24,7 +26,11 @@ def normalize(vectors: np.ndarray) -> np.ndarray:
 
 
 def create_collection(client: MilvusClient, collection_name: str):
-    schema = client.create_schema(auto_id=True, enable_dynamic_field=False)
+    schema = client.create_schema(
+        auto_id=True,
+        enable_dynamic_field=False,
+        description=json.dumps(milvus_model_properties(), sort_keys=True),
+    )
     schema.add_field(field_name="id", datatype=DataType.INT64, is_primary=True)
     schema.add_field(field_name="video_id", datatype=DataType.VARCHAR, max_length=256)
     schema.add_field(field_name="frame_id", datatype=DataType.INT64)

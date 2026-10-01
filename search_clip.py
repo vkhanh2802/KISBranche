@@ -13,18 +13,30 @@ class SiglipRetriever:
         print(f"Connected to Milvus: {COLLECTION_NAME}")
 
     def search(self, query_vector, top_k=100): 
+        if top_k <= 0:
+            raise ValueError("top_k must be positive")
+
         query_vector = np.asarray(query_vector, dtype=np.float32)
 
         if query_vector.ndim == 1:
             query_vector = query_vector.reshape(1, -1)
 
+        if query_vector.ndim != 2 or query_vector.shape[0] != 1:
+            raise ValueError("search expects exactly one query vector")
+
         # Trình chặn lỗi nếu vector khác 768 chiều
         if query_vector.shape[1] != EMBEDDING_DIM:
-            raise ValueError(f"Query vector có {query_vector.shape[1]} chiều, cần {EMBEDDING_DIM} chiều.")
+            raise ValueError(
+                f"Query vector has {query_vector.shape[1]} dimensions; "
+                f"expected {EMBEDDING_DIM}"
+            )
+        if not np.isfinite(query_vector).all():
+            raise ValueError("Query vector contains NaN or infinity")
 
         # Chuẩn hóa L2 (Bắt buộc cho search Inner Product - IP)
         norms = np.linalg.norm(query_vector, axis=1, keepdims=True)
-        norms[norms == 0] = 1e-12
+        if np.any(norms <= np.finfo(np.float32).eps):
+            raise ValueError("Query vector must not be zero")
         query_vector = query_vector / norms
 
         results = self.client.search(

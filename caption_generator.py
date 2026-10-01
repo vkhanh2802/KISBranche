@@ -1,28 +1,22 @@
 import os
-os.environ["KMP_DUPLICATE_LIB_OK"] = "TRUE"
-
-import csv
 import json
 from pathlib import Path
+import numpy  # Load the shared Windows OpenMP runtime before PyTorch.
 import torch
 from torch.utils.data import Dataset, DataLoader
 from PIL import Image
 from transformers import BlipProcessor, BlipForQuestionAnswering, BlipForConditionalGeneration
-from paths import CAPTION_JSON, DATA_DIR, MAPPING_DIR, stored_path
-
-# 1. LOAD CSV MAPPING
-def load_frame_mapping(csv_path):
-    mapping = {}
-    with open(csv_path, "r", encoding="utf-8") as f:
-        reader = csv.DictReader(f)
-        for i, row in enumerate(reader):
-            try:
-                n = int(row.get("n", row.get("keyframe_n", i)))
-                frame_id = int(row.get("frame_idx", row.get("frame_id", 0)))
-                mapping[n] = frame_id
-            except (ValueError, TypeError):
-                continue
-    return mapping
+from artifact_io import atomic_write_json
+from caption_schema import load_frame_mapping
+from model_config import CAPTION_GENERATION_CONFIG
+from paths import (
+    CAPTION_DIR,
+    DATA_DIR,
+    MAPPING_DIR,
+    canonical_video_artifact_path,
+    resolve_video_artifact,
+    stored_path,
+)
 
 # 2. DATASET CHO BATCH PROCESSING
 class KeyframeDataset(Dataset):
@@ -37,7 +31,8 @@ class KeyframeDataset(Dataset):
 
     def __getitem__(self, idx):
         task = self.tasks[idx]
-        image = Image.open(task["img_path"]).convert("RGB")
+        with Image.open(task["img_path"]) as source_image:
+            image = source_image.convert("RGB")
         return image, task
 
 def collate_fn(batch):
@@ -86,52 +81,16 @@ def generate_batch_vqa(images, question, processor, model, device, max_new_token
 def generate_captions_with_mapping(
     image_root=DATA_DIR,
     csv_root=MAPPING_DIR,
-    output_json=CAPTION_JSON,
+    output_dir=CAPTION_DIR,
     video_ids=None,
     batch_size=16, # Điều chỉnh batch size tùy VRAM (VD: 8, 16, 32)
     num_workers=4,
 ):
     image_root = os.fspath(image_root)
-    csv_root = os.fspath(csv_root)
-    output_json = os.fspath(output_json)
-    os.makedirs(os.path.dirname(output_json), exist_ok=True)
+    csv_root = Path(csv_root)
+    output_dir = Path(output_dir)
+    output_dir.mkdir(parents=True, exist_ok=True)
     
-    cap_model_id = "Salesforce/blip-image-captioning-large"
-    vqa_model_id = "Salesforce/blip-vqa-base"
-
-    print(f"[*] Loading models...")
-    cap_processor = BlipProcessor.from_pretrained(cap_model_id)
-    cap_model = BlipForConditionalGeneration.from_pretrained(cap_model_id)
-
-    vqa_processor = BlipProcessor.from_pretrained(vqa_model_id)
-    vqa_model = BlipForQuestionAnswering.from_pretrained(vqa_model_id)
-
-    device = "cuda" if torch.cuda.is_available() else "cpu"
-    cap_model.to(device)
-    vqa_model.to(device)
-
-    if device == "cuda":
-        cap_model = cap_model.half()
-        vqa_model = vqa_model.half()
-
-    cap_model.eval()
-    vqa_model.eval()
-
-    print(f"[*] Device: {device} | Batch Size: {batch_size}")
-
-    # Load existing checkpoint
-    if os.path.exists(output_json):
-        try:
-            with open(output_json, "r", encoding="utf-8") as f:
-                caption_data = json.load(f)
-        except Exception:
-            caption_data = []
-    else:
-        caption_data = []
-
-    processed = {(x["video_id"], x["frame_id"]) for x in caption_data}
-    print(f"[*] Already processed: {len(processed)} frames")
-
     # Gom toàn bộ công việc cần làm vào 1 danh sách
     valid_extensions = (".jpg", ".jpeg", ".png")
     video_folders = sorted(
@@ -141,13 +100,47 @@ def generate_captions_with_mapping(
         video_folders = [v for v in video_folders if v in video_ids]
 
     tasks_to_run = []
+    caption_data_by_video = {}
+    output_path_by_video = {}
+    processed = set()
     for video_id in video_folders:
         image_dir = os.path.join(image_root, video_id)
-        csv_path = os.path.join(csv_root, video_id + ".csv")
-        if not os.path.exists(csv_path):
+        csv_path = csv_root / f"{video_id}.csv"
+        if not csv_path.is_file():
             continue
 
-        frame_mapping = load_frame_mapping(csv_path)
+        canonical_output = canonical_video_artifact_path(
+            output_dir,
+            video_id,
+            ".json",
+        )
+        existing_output = resolve_video_artifact(
+            output_dir,
+            video_id,
+            ".json",
+        )
+        if existing_output.is_file():
+            if existing_output.resolve() != canonical_output.resolve():
+                raise RuntimeError(
+                    f"Legacy caption path detected: {existing_output}. "
+                    "Run migrate_caption_artifacts.py --apply first."
+                )
+            with existing_output.open("r", encoding="utf-8") as file:
+                caption_data = json.load(file)
+            if not isinstance(caption_data, list):
+                raise ValueError(f"Caption checkpoint must be an array: {existing_output}")
+        else:
+            caption_data = []
+
+        caption_data_by_video[video_id] = caption_data
+        output_path_by_video[video_id] = canonical_output
+        processed.update(
+            (item["video_id"], int(item["frame_id"]))
+            for item in caption_data
+            if item.get("frame_id") is not None
+        )
+
+        frame_mapping = load_frame_mapping(video_id, csv_root)
         image_files = sorted(
             f for f in os.listdir(image_dir) if f.lower().endswith(valid_extensions)
         )
@@ -170,9 +163,44 @@ def generate_captions_with_mapping(
             })
 
     print(f"[*] Total frames remaining to process: {len(tasks_to_run)}")
+    print(f"[*] Already processed: {len(processed)} frames")
     if not tasks_to_run:
         print("[*] Nothing to process.")
         return
+
+    cap_model_id = CAPTION_GENERATION_CONFIG["caption_model"]
+    cap_revision = CAPTION_GENERATION_CONFIG["caption_revision"]
+    vqa_model_id = CAPTION_GENERATION_CONFIG["vqa_model"]
+    vqa_revision = CAPTION_GENERATION_CONFIG["vqa_revision"]
+
+    print("[*] Loading models...")
+    cap_processor = BlipProcessor.from_pretrained(
+        cap_model_id,
+        revision=cap_revision,
+    )
+    cap_model = BlipForConditionalGeneration.from_pretrained(
+        cap_model_id,
+        revision=cap_revision,
+    )
+    vqa_processor = BlipProcessor.from_pretrained(
+        vqa_model_id,
+        revision=vqa_revision,
+    )
+    vqa_model = BlipForQuestionAnswering.from_pretrained(
+        vqa_model_id,
+        revision=vqa_revision,
+    )
+
+    device = "cuda" if torch.cuda.is_available() else "cpu"
+    if device == "cuda":
+        cap_model = cap_model.half().to(device)
+        vqa_model = vqa_model.half().to(device)
+    else:
+        cap_model.to(device)
+        vqa_model.to(device)
+    cap_model.eval()
+    vqa_model.eval()
+    print(f"[*] Device: {device} | Batch Size: {batch_size}")
 
     # Tạo DataLoader để load ảnh song song
     dataset = KeyframeDataset(tasks_to_run)
@@ -199,12 +227,14 @@ def generate_captions_with_mapping(
                     vqa_batch_answers[i][q_key] = ans.strip()
 
             # 3. Đóng gói kết quả cho từng item trong batch
+            affected_videos = set()
             for i, meta in enumerate(metadatas):
                 gen_cap = captions[i].strip()
                 answers = vqa_batch_answers[i]
 
                 detail_parts = []
-                if answers.get("people") and answers["people"].lower() not in ("no", "none"):
+                people_answer = answers.get("people", "").strip().lower()
+                if people_answer and not people_answer.startswith("no"):
                     detail_parts.append(f"people present, wearing {answers.get('clothing_color', 'unknown')} clothes")
                 if answers.get("main_object"):
                     detail_parts.append(f"main object: {answers['main_object']} ({answers.get('object_color', 'unknown')} color)")
@@ -216,7 +246,7 @@ def generate_captions_with_mapping(
                     detail_parts.append(f"location: {answers['location']}")
 
                 details_text = "; ".join(detail_parts)
-                retrieval_text = f"{gen_cap}. {details_text}"
+                retrieval_text = f"{gen_cap}. {details_text}".strip(". ")
 
                 item = {
                     "video_id": meta["video_id"],
@@ -228,22 +258,26 @@ def generate_captions_with_mapping(
                     "details": details_text,
                     "retrieval_text": retrieval_text,
                 }
-                caption_data.append(item)
+                caption_data_by_video[meta["video_id"]].append(item)
+                affected_videos.add(meta["video_id"])
 
             save_counter += 1
             print(f"[*] Processed batch {save_counter}/{-(-len(tasks_to_run)//batch_size)}")
 
-            # Ghi Checkpoint sau mỗi Batch (thay vì sau mỗi ảnh) để tiết kiệm IO
-            with open(output_json, "w", encoding="utf-8") as f:
-                json.dump(caption_data, f, ensure_ascii=False, indent=2)
-
-            if device == "cuda":
-                torch.cuda.empty_cache()
+            for video_id in affected_videos:
+                atomic_write_json(
+                    output_path_by_video[video_id],
+                    caption_data_by_video[video_id],
+                )
 
         except Exception as e:
-            print(f"[Error in batch]: {e}")
+            raise RuntimeError(f"Caption generation batch failed: {e}") from e
+        finally:
+            for image in images:
+                image.close()
 
-    print(f"\n[*] Finished! Total saved: {len(caption_data)} captions")
+    total_saved = sum(len(items) for items in caption_data_by_video.values())
+    print(f"\n[*] Finished! Total saved: {total_saved} captions")
 
 
 if __name__ == "__main__":

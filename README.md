@@ -1,18 +1,32 @@
-## AIC 2026 KIS Branch 
+## AIC 2026 KIS Branch
 # Setup
-Data:
-    - List of keyframes from video
-    - Object detection score
-    - Mapping between keyframes and frame_index
-    - Clip-features
-    All of those data are provided by AIC
-Operation:
-    - Setup a Milvus instance at http://localhost:19530
-    - Create the initial collection with `python build_milvus.py build`
-    - Replace an existing collection safely with `python build_milvus.py rebuild`
-    - Generate caption for each keyframe by caption_generator.py
-    - Generate caption index and mapping by build_caption_index.py
-    - Run all branch in notebook runbranch.py
+
+1. Install the pinned direct dependencies from `requirements.txt`. Install the
+   PyTorch CUDA wheel appropriate for the host before loading the VLM.
+2. Place provider artifacts in `data/<video_id>/`, `mapping/`, `objects/`, and
+   `clip-features-32/`.
+3. Review `model_manifest.json`. The supplied visual vectors are expected to be
+   normalized `ViT-B-16-SigLIP/webli` embeddings with 768 dimensions.
+4. Migrate legacy caption shards with
+   `python migrate_caption_artifacts.py --apply`. Run without `--apply` for a
+   dry run.
+5. Generate missing captions with `python caption_generator.py`.
+6. Build per-video caption indexes with `python build_caption_index.py`. Use
+   repeated `--video-id L21_V001` arguments to rebuild selected videos.
+7. Start Milvus at `http://localhost:19530`, then create the initial visual
+   collection with `python build_milvus.py build`. Use
+   `python build_milvus.py rebuild` for a staged replacement.
+8. Set `GEMINI_API_KEY` before running `gemini_ocr.py`. Images are uploaded to
+   Gemini by that command.
+9. Run the retrieval pipeline from `runbranch.ipynb`.
+
+Canonical caption artifacts are stored as:
+
+```text
+caption_generator/<group>/<video_id>.json
+caption_mapping/<group>/<video_id>.json
+index/<group>/<video_id>.index
+```
                              USER QUERY
                              │
                              ▼

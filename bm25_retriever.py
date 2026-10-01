@@ -8,7 +8,7 @@ class BM25Retriever:
         Định dạng mỗi phần tử: {"video_id": "...", "frame_id": 123, "retrieval_text": "..."}
         """
         self.caption_data = caption_data
-        print(f"[*] Khởi tạo BM25 cho {len(caption_data)} frames...")
+        print(f"[*] Initializing BM25 for {len(caption_data)} frames...")
         
         # Tách từ đơn giản (Tokenization) bằng khoảng trắng và chuyển chữ thường
         self.corpus_tokens = [
@@ -18,7 +18,7 @@ class BM25Retriever:
         
         # Khởi tạo thuật toán BM25
         self.bm25 = BM25Okapi(self.corpus_tokens)
-        print("[*] BM25 Indexing hoàn tất!")
+        print("[*] BM25 indexing complete.")
 
     def search_bm25(self, query, top_k=100):
         # Tách từ câu truy vấn

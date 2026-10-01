@@ -3,10 +3,12 @@ import numpy as np
 import faiss
 from sentence_transformers import SentenceTransformer
 from pathlib import Path
+from model_config import CAPTION_CONFIG
 from paths import (
     CAPTION_DIR,
     CAPTION_MAPPING_DIR,
     INDEX_DIR,
+    resolve_video_artifact,
     video_caption_index_path,
     video_caption_mapping_path,
     video_caption_path,
@@ -17,26 +19,67 @@ class CaptionRetriever:
 
     @staticmethod
     def _artifact_for_video(base_dir: Path, suffix: str, video_id: str) -> Path:
-        """Resolve artifact path for a video in either nested or flat layout."""
-        group = video_id.split("_")[0]
-        nested = base_dir / group / f"{video_id}{suffix}"
-        if nested.exists():
-            return nested
-
-        flat = base_dir / f"{video_id}{suffix}"
-        if flat.exists():
-            return flat
-
-        matches = list(base_dir.rglob(f"{video_id}{suffix}"))
-        if matches:
-            return matches[0]
-
-        return nested
+        """Resolve canonical, flat, or legacy-sharded artifacts."""
+        return resolve_video_artifact(base_dir, video_id, suffix)
 
     @staticmethod
     def _collect_artifact_map(base_dir: Path, pattern: str):
         files = sorted(path for path in base_dir.rglob(pattern) if path.is_file())
-        return {path.stem: path for path in files}
+        artifacts = {}
+        for path in files:
+            if path.stem in artifacts:
+                raise RuntimeError(
+                    f"Duplicate artifacts for {path.stem}: "
+                    f"{artifacts[path.stem]}, {path}"
+                )
+            artifacts[path.stem] = path
+        return artifacts
+
+    @staticmethod
+    def _load_json_list(path: Path, artifact_name: str):
+        with open(path, "r", encoding="utf-8") as file:
+            data = json.load(file)
+        if not isinstance(data, list):
+            raise ValueError(f"{artifact_name} must be a JSON array: {path}")
+        return data
+
+    @staticmethod
+    def _validate_triplet(video_id, captions, mapping, index, paths):
+        caption_path, mapping_path, index_path = paths
+        expected = len(captions)
+        if expected == 0:
+            raise ValueError(f"Caption file is empty: {caption_path}")
+        if len(mapping) != expected or index.ntotal != expected:
+            raise ValueError(
+                f"Artifact count mismatch for {video_id}: "
+                f"captions={expected}, mapping={len(mapping)}, "
+                f"index={index.ntotal} ({index_path})"
+            )
+
+        for position, (caption, mapped) in enumerate(zip(captions, mapping)):
+            caption_identity = (
+                caption.get("video_id"),
+                caption.get("frame_id"),
+                caption.get("keyframe_n"),
+            )
+            mapping_identity = (
+                mapped.get("video_id"),
+                mapped.get("frame_id"),
+                mapped.get("keyframe_n"),
+            )
+            if (
+                caption_identity[0] != video_id
+                or caption_identity != mapping_identity
+            ):
+                raise ValueError(
+                    f"Artifact identity mismatch for {video_id} at row "
+                    f"{position}: {caption_path}, {mapping_path}"
+                )
+
+        return any(
+            item.get("retrieval_text") or item.get("caption")
+            for item in captions
+        )
 
     def __init__(
         self,
@@ -56,7 +99,8 @@ class CaptionRetriever:
         print("[Caption] Loading SentenceTransformer...")
 
         self.model = SentenceTransformer(
-            "sentence-transformers/all-MiniLM-L6-v2",
+            CAPTION_CONFIG["model"],
+            revision=CAPTION_CONFIG["revision"],
             device="cpu"
         )
 
@@ -72,16 +116,36 @@ class CaptionRetriever:
             caption_data = []
             indexes = []
             mapping = []
+            loaded_video_ids = []
 
             for vid in common_video_ids:
                 caption_file = caption_by_video[vid]
                 index_file = index_by_video[vid]
                 mapping_file = mapping_by_video[vid]
-                with open(caption_file, "r", encoding="utf-8") as f:
-                    caption_data.extend(json.load(f))
-                indexes.append(faiss.read_index(str(index_file)))
-                with open(mapping_file, "r", encoding="utf-8") as f:
-                    mapping.extend(json.load(f))
+                video_captions = self._load_json_list(
+                    caption_file,
+                    "Caption artifact",
+                )
+                video_mapping = self._load_json_list(
+                    mapping_file,
+                    "Caption mapping",
+                )
+                video_index = faiss.read_index(str(index_file))
+                has_text = self._validate_triplet(
+                    vid,
+                    video_captions,
+                    video_mapping,
+                    video_index,
+                    (caption_file, mapping_file, index_file),
+                )
+                if not has_text:
+                    print(f"[Caption] Skipping {vid}: no searchable text")
+                    continue
+
+                caption_data.extend(video_captions)
+                indexes.append(video_index)
+                mapping.extend(video_mapping)
+                loaded_video_ids.append(vid)
 
             if not indexes:
                 raise FileNotFoundError("Khong tim thay caption/index theo video")
@@ -103,30 +167,39 @@ class CaptionRetriever:
                 self.index.add(x=vectors)
             self.caption_data = caption_data
             self.mapping = mapping
-            self.json_path = [caption_by_video[vid] for vid in common_video_ids]
-            self.index_path = [index_by_video[vid] for vid in common_video_ids]
-            self.mapping_path = [mapping_by_video[vid] for vid in common_video_ids]
+            self.json_path = [caption_by_video[vid] for vid in loaded_video_ids]
+            self.index_path = [index_by_video[vid] for vid in loaded_video_ids]
+            self.mapping_path = [mapping_by_video[vid] for vid in loaded_video_ids]
         else:
             self.json_path = json_path
             self.index_path = index_path
             self.mapping_path = mapping_path
             if json_path is None or index_path is None or mapping_path is None:
                 raise ValueError("Caption paths must be provided")
-            with open(json_path, "r", encoding="utf-8") as f:
-                self.caption_data = json.load(f)
+            self.caption_data = self._load_json_list(
+                json_path,
+                "Caption artifact",
+            )
             self.index = faiss.read_index(str(index_path))
-            with open(mapping_path, "r", encoding="utf-8") as f:
-                self.mapping = json.load(f)
+            self.mapping = self._load_json_list(
+                mapping_path,
+                "Caption mapping",
+            )
+            if not self._validate_triplet(
+                video_id or self.caption_data[0].get("video_id"),
+                self.caption_data,
+                self.mapping,
+                self.index,
+                (json_path, mapping_path, index_path),
+            ):
+                raise ValueError(f"Caption artifact has no searchable text: {json_path}")
 
         print(
             f"[Caption] Loaded {self.index.ntotal} caption vectors"
         )
 
-        if self.index.ntotal != len(self.caption_data):
-            print(
-                "[Warning] Number of vectors and JSON records "
-                "do not match!"
-            )
+        if self.index.ntotal != len(self.mapping):
+            raise ValueError("Number of vectors and mapping records do not match")
 
     def encode_query(self, query):
         """

@@ -2,9 +2,20 @@ import os
 import json
 import time
 from PIL import Image
-from pathlib import Path
 from google import genai
-from paths import DATA_DIR, KIS_ROOT, CAPTION_DIR
+from artifact_io import atomic_write_json
+from caption_schema import (
+    load_frame_mapping,
+    normalize_caption_record,
+    rebuild_retrieval_text,
+)
+from paths import (
+    CAPTION_DIR,
+    DATA_DIR,
+    resolve_video_artifact,
+    stored_path,
+    video_caption_path,
+)
 
 GEMINI_API_KEY = os.environ.get("GEMINI_API_KEY")
 MODEL_ID = "gemini-3.1-flash-lite"
@@ -29,9 +40,10 @@ def run_gemini_ocr_all():
         )
 
     client = genai.Client(api_key=GEMINI_API_KEY)
-    print("=== BẮT ĐẦU OCR ===")
+    print("=== STARTING OCR ===")
 
     valid_exts = (".jpg", ".jpeg", ".png")
+    failures = []
 
     # Lấy tất cả thư mục video
     video_folders = sorted(
@@ -39,31 +51,33 @@ def run_gemini_ocr_all():
         if d.is_dir()
     )
 
-    print(f"[*] Tìm thấy {len(video_folders)} thư mục video.")
+    print(f"[*] Found {len(video_folders)} video directories.")
 
     for image_dir in video_folders:
 
         vid = image_dir.name
-        parent_dir = vid.split("_")[0]
-
-        # Đường dẫn JSON
-        json_path = CAPTION_DIR / parent_dir / f"{vid}.json"
-
-        # Nếu JSON nằm trực tiếp trong CAPTION_DIR
-        if not json_path.exists():
-            fallback = CAPTION_DIR / f"{vid}.json"
-            if fallback.exists():
-                json_path = fallback
-
-        json_path.parent.mkdir(parents=True, exist_ok=True)
+        json_path = resolve_video_artifact(CAPTION_DIR, vid, ".json")
+        canonical_path = video_caption_path(vid)
+        if json_path.is_file() and json_path.resolve() != canonical_path.resolve():
+            raise RuntimeError(
+                f"Legacy caption path detected: {json_path}. "
+                "Run migrate_caption_artifacts.py --apply first."
+            )
+        json_path = canonical_path
+        frame_mapping = load_frame_mapping(vid)
 
         # Đọc JSON cũ
         if json_path.exists():
-            try:
-                with open(json_path, "r", encoding="utf-8") as f:
-                    caption_data = json.load(f)
-            except Exception:
-                caption_data = []
+            with open(json_path, "r", encoding="utf-8") as f:
+                loaded_caption_data = json.load(f)
+            if not isinstance(loaded_caption_data, list):
+                raise ValueError(f"Caption file must be an array: {json_path}")
+            caption_data = [
+                normalize_caption_record(item, vid, frame_mapping)
+                for item in loaded_caption_data
+            ]
+            if caption_data != loaded_caption_data:
+                atomic_write_json(json_path, caption_data)
         else:
             caption_data = []
 
@@ -83,7 +97,7 @@ def run_gemini_ocr_all():
         if not image_files:
             continue
 
-        print(f"\n[{vid}] {len(image_files)} ảnh")
+        print(f"\n[{vid}] {len(image_files)} images")
 
         # Xử lý từng ảnh
         for img_name in image_files:
@@ -93,7 +107,7 @@ def run_gemini_ocr_all():
                     os.path.splitext(img_name)[0]
                 )
             except ValueError:
-                print(f"  [SKIP] Tên ảnh không hợp lệ: {img_name}")
+                print(f"  [SKIP] Invalid image filename: {img_name}")
                 continue
 
             img_path = image_dir / img_name
@@ -104,21 +118,19 @@ def run_gemini_ocr_all():
             # Nếu chưa có record thì tạo mới
             if item is None:
 
-                try:
-                    image_path = str(
-                        img_path.relative_to(KIS_ROOT)
+                frame_id = frame_mapping.get(keyframe_n)
+                if frame_id is None:
+                    raise ValueError(
+                        f"Missing frame mapping for {vid} keyframe {keyframe_n}"
                     )
-                except ValueError:
-                    image_path = str(img_path)
 
                 item = {
                     "video_id": vid,
-                    "frame_id": None,
+                    "frame_id": frame_id,
                     "keyframe_n": keyframe_n,
-                    "image_path": image_path,
+                    "image_path": stored_path(img_path),
                     "caption": "",
                     "vqa_answers": {},
-                    "ocr_text": "",
                     "details": "",
                     "retrieval_text": ""
                 }
@@ -126,8 +138,8 @@ def run_gemini_ocr_all():
                 caption_data.append(item)
                 existing[keyframe_n] = item
 
-            # Resume: đã có OCR thì bỏ qua
-            if item.get("ocr_text"):
+            # Field presence distinguishes NO_TEXT from unprocessed records.
+            if "ocr_text" in item:
                 continue
 
             try:
@@ -160,69 +172,38 @@ def run_gemini_ocr_all():
                 # Hiển thị kết quả
                 if item["ocr_text"]:
                     print(
-                        f"  ✓ {img_name}: "
+                        f"  [OK] {img_name}: "
                         f"{item['ocr_text']}"
                     )
                 else:
                     print(
-                        f"  ✓ {img_name}: NO TEXT"
+                        f"  [OK] {img_name}: NO TEXT"
                     )
 
-                # -----------------------------------------
-                # Rebuild retrieval_text
-                # -----------------------------------------
-
-                caption = item.get("caption", "") or ""
-                details = item.get("details", "") or ""
-                ocr_text = item.get("ocr_text", "") or ""
-
-                base_text = ". ".join(
-                    text.strip(". ")
-                    for text in [caption, details]
-                    if text.strip()
-                )
-
-                if ocr_text:
-                    if base_text:
-                        item["retrieval_text"] = (
-                            f"{base_text}. [OCR]: {ocr_text}"
-                        )
-                    else:
-                        item["retrieval_text"] = (
-                            f"[OCR]: {ocr_text}"
-                        )
-                else:
-                    item["retrieval_text"] = base_text
+                item["retrieval_text"] = rebuild_retrieval_text(item)
 
                 # -----------------------------------------
                 # Lưu JSON ngay sau mỗi ảnh
                 # -----------------------------------------
 
-                with open(
-                    json_path,
-                    "w",
-                    encoding="utf-8"
-                ) as f:
-                    json.dump(
-                        caption_data,
-                        f,
-                        ensure_ascii=False,
-                        indent=2
-                    )
+                atomic_write_json(json_path, caption_data)
 
                 time.sleep(4)
 
             except Exception as e:
+                failures.append((vid, img_name, str(e)))
 
                 print(
-                    f"  ✗ Lỗi [{vid} - {img_name}]: {e}"
+                    f"  [ERROR] [{vid} - {img_name}]: {e}"
                 )
 
                 time.sleep(10)
 
-        print(f"[✓] Hoàn tất {vid}")
+        print(f"[OK] Completed {vid}")
 
-    print("\n=== HOÀN TẤT OCR ===")
+    print("\n=== OCR COMPLETE ===")
+    if failures:
+        raise RuntimeError(f"OCR failed for {len(failures)} images")
 
 
 if __name__ == "__main__":
