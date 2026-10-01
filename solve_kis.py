@@ -50,8 +50,20 @@ def static_weight_fusion_3_way(visual_results, bm25_results, semantic_results, w
         for item in results:
             key = (item["video_id"], item["frame_id"])
             if key not in candidates:
-                candidates[key] = {**item, "visual_score": 0.0, "bm25_score": 0.0, "semantic_score": 0.0}
-            candidates[key][score_key] = item.get("norm_score", 0.0)
+                candidates[key] = {
+                    "visual_score": 0.0,
+                    "bm25_score": 0.0,
+                    "semantic_score": 0.0,
+                }
+
+            candidate = candidates[key]
+            for field, value in item.items():
+                if field in {"score", "norm_score"}:
+                    continue
+                if field not in candidate or candidate[field] in (None, ""):
+                    candidate[field] = value
+
+            candidate[score_key] = item.get("norm_score", 0.0)
 
     # Nạp điểm từ 3 luồng
     add_scores(visual_results, "visual_score")
