@@ -82,9 +82,6 @@ def validate_video_input(npy_path: Path) -> int:
         frame_ids, np.floor(frame_ids)
     ).all():
         raise ValueError(f"{video_id}: frame_idx must contain finite integers")
-    if len(np.unique(frame_ids)) != len(frame_ids):
-        raise ValueError(f"{video_id}: frame_idx contains duplicates")
-
     return len(features)
 
 

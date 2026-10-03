@@ -5,12 +5,14 @@ import unittest
 from PIL import Image
 
 from apply_object_filter import apply_object_filter
+from caption_artifact_manifest import validate_caption_manifest
 from caption_schema import load_frame_mapping, normalize_caption_record
 from model_config import CAPTION_CONFIG
 from object_filter import ObjectMetadataLookup
 from paths import (
     KIS_ROOT,
     video_caption_index_path,
+    video_caption_manifest_path,
     video_caption_mapping_path,
     video_caption_path,
     video_image_dir,
@@ -85,6 +87,15 @@ class SampleDataTest(unittest.TestCase):
         self.assertEqual(index.ntotal, len(captions))
         self.assertEqual(index.ntotal, len(mapping))
         self.assertEqual(index.d, int(CAPTION_CONFIG["dimension"]))
+        validate_caption_manifest(
+            SAMPLE_VIDEO_ID,
+            video_caption_path(SAMPLE_VIDEO_ID),
+            video_caption_mapping_path(SAMPLE_VIDEO_ID),
+            video_caption_index_path(SAMPLE_VIDEO_ID),
+            video_caption_manifest_path(SAMPLE_VIDEO_ID),
+            index,
+            len(captions),
+        )
 
 
 if __name__ == "__main__":

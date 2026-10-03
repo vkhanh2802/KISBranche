@@ -3,6 +3,7 @@ import numpy as np
 import faiss
 from sentence_transformers import SentenceTransformer
 from pathlib import Path
+from caption_artifact_manifest import validate_caption_manifest
 from model_config import CAPTION_CONFIG
 from paths import (
     CAPTION_DIR,
@@ -10,6 +11,7 @@ from paths import (
     INDEX_DIR,
     resolve_video_artifact,
     video_caption_index_path,
+    video_caption_manifest_path,
     video_caption_mapping_path,
     video_caption_path,
 )
@@ -36,6 +38,19 @@ class CaptionRetriever:
         return artifacts
 
     @staticmethod
+    def _collect_manifest_map(base_dir: Path):
+        artifacts = {}
+        for path in sorted(base_dir.rglob("L*_V*.meta.json")):
+            video_id = path.name.removesuffix(".meta.json")
+            if video_id in artifacts:
+                raise RuntimeError(
+                    f"Duplicate manifests for {video_id}: "
+                    f"{artifacts[video_id]}, {path}"
+                )
+            artifacts[video_id] = path
+        return artifacts
+
+    @staticmethod
     def _load_json_list(path: Path, artifact_name: str):
         with open(path, "r", encoding="utf-8") as file:
             data = json.load(file)
@@ -45,7 +60,7 @@ class CaptionRetriever:
 
     @staticmethod
     def _validate_triplet(video_id, captions, mapping, index, paths):
-        caption_path, mapping_path, index_path = paths
+        caption_path, mapping_path, index_path, manifest_path = paths
         expected = len(captions)
         if expected == 0:
             raise ValueError(f"Caption file is empty: {caption_path}")
@@ -76,6 +91,16 @@ class CaptionRetriever:
                     f"{position}: {caption_path}, {mapping_path}"
                 )
 
+        validate_caption_manifest(
+            video_id,
+            caption_path,
+            mapping_path,
+            index_path,
+            manifest_path,
+            index,
+            expected,
+        )
+
         return any(
             item.get("retrieval_text") or item.get("caption")
             for item in captions
@@ -93,6 +118,13 @@ class CaptionRetriever:
             json_path = self._artifact_for_video(CAPTION_DIR, ".json", video_id)
             index_path = self._artifact_for_video(INDEX_DIR, ".index", video_id)
             mapping_path = self._artifact_for_video(CAPTION_MAPPING_DIR, ".json", video_id)
+            manifest_path = self._artifact_for_video(
+                INDEX_DIR,
+                ".meta.json",
+                video_id,
+            )
+        else:
+            manifest_path = None
 
         self.video_id = video_id
 
@@ -108,9 +140,13 @@ class CaptionRetriever:
             caption_by_video = self._collect_artifact_map(CAPTION_DIR, "L*_V*.json")
             index_by_video = self._collect_artifact_map(INDEX_DIR, "L*_V*.index")
             mapping_by_video = self._collect_artifact_map(CAPTION_MAPPING_DIR, "L*_V*.json")
+            manifest_by_video = self._collect_manifest_map(INDEX_DIR)
 
             common_video_ids = sorted(
-                set(caption_by_video) & set(index_by_video) & set(mapping_by_video)
+                set(caption_by_video)
+                & set(index_by_video)
+                & set(mapping_by_video)
+                & set(manifest_by_video)
             )
 
             caption_data = []
@@ -136,7 +172,12 @@ class CaptionRetriever:
                     video_captions,
                     video_mapping,
                     video_index,
-                    (caption_file, mapping_file, index_file),
+                    (
+                        caption_file,
+                        mapping_file,
+                        index_file,
+                        manifest_by_video[vid],
+                    ),
                 )
                 if not has_text:
                     print(f"[Caption] Skipping {vid}: no searchable text")
@@ -153,12 +194,14 @@ class CaptionRetriever:
             missing_caption = sorted(set(index_by_video) - set(caption_by_video))
             missing_index = sorted(set(caption_by_video) - set(index_by_video))
             missing_mapping = sorted(set(caption_by_video) - set(mapping_by_video))
-            if missing_caption or missing_index or missing_mapping:
-                print(
-                    "[Warning] Mot so video bi thieu artifact: "
+            missing_manifest = sorted(set(caption_by_video) - set(manifest_by_video))
+            if missing_caption or missing_index or missing_mapping or missing_manifest:
+                raise FileNotFoundError(
+                    "Incomplete caption artifacts: "
                     f"missing_caption={len(missing_caption)}, "
                     f"missing_index={len(missing_index)}, "
-                    f"missing_mapping={len(missing_mapping)}"
+                    f"missing_mapping={len(missing_mapping)}, "
+                    f"missing_manifest={len(missing_manifest)}"
                 )
 
             self.index = faiss.IndexFlatIP(indexes[0].d)
@@ -170,6 +213,7 @@ class CaptionRetriever:
             self.json_path = [caption_by_video[vid] for vid in loaded_video_ids]
             self.index_path = [index_by_video[vid] for vid in loaded_video_ids]
             self.mapping_path = [mapping_by_video[vid] for vid in loaded_video_ids]
+            self.manifest_path = [manifest_by_video[vid] for vid in loaded_video_ids]
         else:
             self.json_path = json_path
             self.index_path = index_path
@@ -185,12 +229,18 @@ class CaptionRetriever:
                 mapping_path,
                 "Caption mapping",
             )
+            artifact_video_id = video_id or self.caption_data[0].get("video_id")
+            if manifest_path is None:
+                manifest_path = Path(index_path).with_name(
+                    f"{artifact_video_id}.meta.json"
+                )
+            self.manifest_path = manifest_path
             if not self._validate_triplet(
-                video_id or self.caption_data[0].get("video_id"),
+                artifact_video_id,
                 self.caption_data,
                 self.mapping,
                 self.index,
-                (json_path, mapping_path, index_path),
+                (json_path, mapping_path, index_path, manifest_path),
             ):
                 raise ValueError(f"Caption artifact has no searchable text: {json_path}")
 

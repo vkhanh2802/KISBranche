@@ -18,6 +18,11 @@ CAPTION_INDEX_MAPPING_PATH = INDEX_DIR / "caption_mapping.json"
 VIDEO_ID_PATTERN = re.compile(r"^L\d+_V\d+$")
 
 
+def safe_filename_component(value, default="output") -> str:
+    sanitized = re.sub(r"[^A-Za-z0-9._-]+", "_", str(value)).strip("._")
+    return sanitized or default
+
+
 def video_group(video_id: str) -> str:
     if not VIDEO_ID_PATTERN.fullmatch(video_id):
         raise ValueError(f"Invalid video_id: {video_id!r}")
@@ -84,6 +89,10 @@ def video_caption_path(video_id: str) -> Path:
 
 def video_caption_index_path(video_id: str) -> Path:
     return canonical_video_artifact_path(INDEX_DIR, video_id, ".index")
+
+
+def video_caption_manifest_path(video_id: str) -> Path:
+    return canonical_video_artifact_path(INDEX_DIR, video_id, ".meta.json")
 
 
 def video_caption_mapping_path(video_id: str) -> Path:

@@ -84,6 +84,17 @@ def normalize_caption_record(record, video_id, frame_mapping=None):
         normalized["frame_id"] = int(frame_id)
     except (TypeError, ValueError) as exc:
         raise ValueError(f"Invalid frame_id for {video_id}: {frame_id!r}") from exc
+    if frame_mapping is not None:
+        expected_frame_id = frame_mapping.get(keyframe_n)
+        if expected_frame_id is None:
+            raise ValueError(
+                f"Missing mapping for {video_id} keyframe {keyframe_n}"
+            )
+        if normalized["frame_id"] != expected_frame_id:
+            raise ValueError(
+                f"frame_id mismatch for {video_id} keyframe {keyframe_n}: "
+                f"{normalized['frame_id']} != {expected_frame_id}"
+            )
 
     image_path = str(normalized.get("image_path", "")).replace("\\", "/")
     parsed_path = PurePosixPath(image_path)
@@ -107,3 +118,14 @@ def caption_identity(record):
         int(record["frame_id"]),
         int(record["keyframe_n"]),
     )
+
+
+def validate_unique_caption_records(records, video_id):
+    keyframes = set()
+    for record in records:
+        keyframe_n = int(record["keyframe_n"])
+        if keyframe_n in keyframes:
+            raise ValueError(
+                f"Duplicate keyframe_n for {video_id}: {keyframe_n}"
+            )
+        keyframes.add(keyframe_n)

@@ -3,6 +3,7 @@
   "visual_embedding": {
     "model": "ViT-B-16-SigLIP",
     "pretrained": "webli",
+    "hf_repo": "timm/ViT-B-16-SigLIP",
     "hf_revision": "41f575766f40e752fdd1383e9565b7f02388c1c4",
     "dimension": 768,
     "normalized": true,
@@ -24,5 +25,9 @@
     "caption_revision": "353689b859fcf0523410b1806dace5fb46ecdf41",
     "vqa_model": "Salesforce/blip-vqa-base",
     "vqa_revision": "787b3d35d57e49572baabd22884b3d5a05acf072"
+  },
+  "query_structuring": {
+    "provider": "gemini",
+    "model": "gemini-3.1-flash-lite"
   }
 }

@@ -124,10 +124,14 @@ class BuildMilvusTest(unittest.TestCase):
     def tearDown(self):
         self.temp_dir.cleanup()
 
-    def write_video(self, dimensions=build_milvus.EMBEDDING_DIM):
+    def write_video(
+        self,
+        dimensions=build_milvus.EMBEDDING_DIM,
+        frame_ids=(10, 20),
+    ):
         features = np.ones((2, dimensions), dtype=np.float32)
         np.save(self.clip_dir / "L01_V001.npy", features)
-        pd.DataFrame({"frame_idx": [10, 20]}).to_csv(
+        pd.DataFrame({"frame_idx": frame_ids}).to_csv(
             self.csv_dir / "L01_V001.csv",
             index=False,
         )
@@ -153,6 +157,17 @@ class BuildMilvusTest(unittest.TestCase):
                 build_milvus.run("build")
 
         constructor.assert_not_called()
+
+    def test_preflight_allows_duplicate_sampled_frame_ids(self):
+        self.write_video(frame_ids=(10, 10))
+        with (
+            patch.object(build_milvus, "CLIP_DIR", self.clip_dir),
+            patch.object(build_milvus, "CSV_DIR", self.csv_dir),
+        ):
+            npy_files, total = build_milvus.preflight_inputs()
+
+        self.assertEqual(len(npy_files), 1)
+        self.assertEqual(total, 2)
 
     def test_rebuild_migrates_legacy_collection_after_staging_succeeds(self):
         self.write_video()

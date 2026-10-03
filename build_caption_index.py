@@ -1,13 +1,17 @@
 import argparse
 import json
-import os
 
 import faiss
 import numpy as np
 from sentence_transformers import SentenceTransformer
 
-from artifact_io import atomic_write_json, temporary_path
-from caption_schema import load_frame_mapping, normalize_caption_record
+from artifact_io import publish_staged_files, temporary_path, write_json
+from caption_artifact_manifest import write_caption_manifest
+from caption_schema import (
+    load_frame_mapping,
+    normalize_caption_record,
+    validate_unique_caption_records,
+)
 from model_config import CAPTION_CONFIG
 from paths import (
     CAPTION_DIR,
@@ -46,6 +50,7 @@ def load_normalized_captions(video_id, caption_path):
         normalize_caption_record(record, video_id, frame_mapping)
         for record in records
     ]
+    validate_unique_caption_records(normalized, video_id)
     texts = [
         item.get("retrieval_text") or item.get("caption", "")
         for item in normalized
@@ -74,18 +79,36 @@ def write_caption_artifacts(video_id, records, embeddings):
 
     index_path = video_caption_index_path(video_id)
     mapping_path = video_caption_mapping_path(video_id)
+    caption_path = video_caption_path(video_id)
     temp_index_path = temporary_path(index_path)
-    index_path.parent.mkdir(parents=True, exist_ok=True)
-    mapping_path.parent.mkdir(parents=True, exist_ok=True)
+    temp_mapping_path = temporary_path(mapping_path)
+    temp_caption_path = temporary_path(caption_path)
 
     try:
+        write_json(temp_caption_path, records)
+        write_json(temp_mapping_path, mapping)
+        index_path.parent.mkdir(parents=True, exist_ok=True)
         faiss.write_index(index, str(temp_index_path))
-        atomic_write_json(mapping_path, mapping)
-        os.replace(temp_index_path, index_path)
+        publish_staged_files(
+            (
+                (caption_path, temp_caption_path),
+                (mapping_path, temp_mapping_path),
+                (index_path, temp_index_path),
+            )
+        )
     finally:
+        temp_caption_path.unlink(missing_ok=True)
+        temp_mapping_path.unlink(missing_ok=True)
         temp_index_path.unlink(missing_ok=True)
 
-    return index_path, mapping_path
+    manifest_path = write_caption_manifest(
+        video_id,
+        caption_path,
+        mapping_path,
+        index_path,
+        len(records),
+    )
+    return index_path, mapping_path, manifest_path
 
 
 def build_caption_index(video_ids=None):
@@ -136,10 +159,7 @@ def build_caption_index(video_ids=None):
         ).astype(np.float32)
         faiss.normalize_L2(embeddings)
 
-        if records != json.loads(caption_path.read_text(encoding="utf-8")):
-            atomic_write_json(canonical_caption_path, records)
-
-        index_path, mapping_path = write_caption_artifacts(
+        index_path, mapping_path, manifest_path = write_caption_artifacts(
             video_id,
             records,
             embeddings,
@@ -148,7 +168,7 @@ def build_caption_index(video_ids=None):
         total_records += len(records)
         print(
             f"[{video_id}] records={len(records)} "
-            f"index={index_path} mapping={mapping_path}"
+            f"index={index_path} mapping={mapping_path} manifest={manifest_path}"
         )
 
     print(f"Built {built} videos ({total_records} records)")

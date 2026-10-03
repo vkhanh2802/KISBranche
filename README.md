@@ -11,14 +11,20 @@
    `python migrate_caption_artifacts.py --apply`. Run without `--apply` for a
    dry run.
 5. Generate missing captions with `python caption_generator.py`.
-6. Build per-video caption indexes with `python build_caption_index.py`. Use
+6. Set `GEMINI_API_KEY` and run `python gemini_ocr.py` if OCR is needed. Images
+   are uploaded to Gemini by that command.
+7. Build per-video caption indexes with `python build_caption_index.py`. Use
    repeated `--video-id L21_V001` arguments to rebuild selected videos.
-7. Start Milvus at `http://localhost:19530`, then create the initial visual
+   Existing canonical indexes can receive integrity manifests with
+   `python caption_artifact_manifest.py --only-missing --acknowledge-model-provenance`
+   only after their provenance is verified.
+8. Start Milvus at `http://localhost:19530`, then create the initial visual
    collection with `python build_milvus.py build`. Use
    `python build_milvus.py rebuild` for a staged replacement.
-8. Set `GEMINI_API_KEY` before running `gemini_ocr.py`. Images are uploaded to
-   Gemini by that command.
-9. Run the retrieval pipeline from `runbranch.ipynb`.
+9. Set `GEMINI_API_KEY` and convert a natural-language query with
+   `python structure_query.py "<query>" --query-id q_058 --output test.json`.
+   This sends only the query text to Gemini and writes validated JSON atomically.
+10. Run the retrieval pipeline from `runbranch.ipynb`.
 
 Canonical caption artifacts are stored as:
 
@@ -26,6 +32,7 @@ Canonical caption artifacts are stored as:
 caption_generator/<group>/<video_id>.json
 caption_mapping/<group>/<video_id>.json
 index/<group>/<video_id>.index
+index/<group>/<video_id>.meta.json
 ```
                              USER QUERY
                              │

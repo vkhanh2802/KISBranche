@@ -1,9 +1,15 @@
 from collections import defaultdict
 import math
 from pathlib import Path
+import sys
 
 from apply_object_filter import apply_object_filter
 from paths import KIS_ROOT, video_image_dir
+
+
+def console_safe_text(value, encoding=None):
+    encoding = encoding or getattr(sys.stdout, "encoding", None) or "utf-8"
+    return str(value).encode(encoding, errors="backslashreplace").decode(encoding)
 
 
 def multi_query_search(query_variants, encoder, retriever, top_k=50):
@@ -249,7 +255,7 @@ def solve_kis(
     # 3. Luồng 2: Text Search (BM25 - Khớp từ khóa cứng)
     bm25_multi = []
     for q in query_variants:
-        print(f"[BM25 Search] Query: {q}")
+        print(f"[BM25 Search] Query: {console_safe_text(q)}")
         bm25_multi.append(
             text_bm25_retriever.search_bm25(q, top_k=retrieval_top_k)
         )
@@ -258,7 +264,7 @@ def solve_kis(
     # 4. Luồng 3: Semantic Text Search (Tìm kiếm ngữ nghĩa Vector)
     semantic_multi = []
     for q in query_variants:
-        print(f"[Semantic Search] Query: {q}")
+        print(f"[Semantic Search] Query: {console_safe_text(q)}")
         semantic_multi.append(
             text_semantic_retriever.search(q, top_k=retrieval_top_k)
         )

@@ -1,15 +1,39 @@
+import json
+
 import numpy as np
 from pymilvus import MilvusClient
+
+from model_config import VISUAL_CONFIG, milvus_model_properties
 
 
 MILVUS_URI = "http://localhost:19530"
 COLLECTION_NAME = "clip_keyframes"
-EMBEDDING_DIM = 768
+EMBEDDING_DIM = int(VISUAL_CONFIG["dimension"])
+
+
+def validate_collection_model(client, collection_name):
+    description = client.describe_collection(
+        collection_name=collection_name
+    ).get("description", "")
+    try:
+        actual = json.loads(description)
+    except (TypeError, json.JSONDecodeError) as exc:
+        raise RuntimeError(
+            f"Milvus collection {collection_name} has no valid model metadata"
+        ) from exc
+
+    expected = milvus_model_properties()
+    if actual != expected:
+        raise RuntimeError(
+            f"Milvus collection {collection_name} model metadata does not "
+            "match model_manifest.json"
+        )
 
 class SiglipRetriever:
     def __init__(self):
         self.client = MilvusClient(uri=MILVUS_URI)
         self.collection_name = COLLECTION_NAME
+        validate_collection_model(self.client, self.collection_name)
         print(f"Connected to Milvus: {COLLECTION_NAME}")
 
     def search(self, query_vector, top_k=100): 

@@ -7,7 +7,11 @@ from torch.utils.data import Dataset, DataLoader
 from PIL import Image
 from transformers import BlipProcessor, BlipForQuestionAnswering, BlipForConditionalGeneration
 from artifact_io import atomic_write_json
-from caption_schema import load_frame_mapping
+from caption_schema import (
+    load_frame_mapping,
+    normalize_caption_record,
+    validate_unique_caption_records,
+)
 from model_config import CAPTION_GENERATION_CONFIG
 from paths import (
     CAPTION_DIR,
@@ -132,15 +136,19 @@ def generate_captions_with_mapping(
         else:
             caption_data = []
 
+        frame_mapping = load_frame_mapping(video_id, csv_root)
+        caption_data = [
+            normalize_caption_record(record, video_id, frame_mapping)
+            for record in caption_data
+        ]
+        validate_unique_caption_records(caption_data, video_id)
         caption_data_by_video[video_id] = caption_data
         output_path_by_video[video_id] = canonical_output
         processed.update(
-            (item["video_id"], int(item["frame_id"]))
+            (item["video_id"], int(item["keyframe_n"]))
             for item in caption_data
-            if item.get("frame_id") is not None
         )
 
-        frame_mapping = load_frame_mapping(video_id, csv_root)
         image_files = sorted(
             f for f in os.listdir(image_dir) if f.lower().endswith(valid_extensions)
         )
@@ -152,7 +160,7 @@ def generate_captions_with_mapping(
                 continue
 
             frame_id = frame_mapping.get(keyframe_n)
-            if frame_id is None or (video_id, frame_id) in processed:
+            if frame_id is None or (video_id, keyframe_n) in processed:
                 continue
 
             tasks_to_run.append({

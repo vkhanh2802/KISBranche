@@ -21,6 +21,12 @@ ARTIFACT_SPECS = (
 )
 
 
+class MigrationTriplet(list):
+    def __init__(self, entries, cleanup=()):
+        super().__init__(entries)
+        self.cleanup = list(cleanup)
+
+
 def file_digest(path: Path):
     digest = hashlib.sha256()
     with path.open("rb") as file:
@@ -52,20 +58,37 @@ def plan_migration(specs=ARTIFACT_SPECS):
 
     for video_id in video_ids:
         triplet = []
+        cleanup = []
         for kind, (root, suffix, artifacts) in by_kind.items():
             candidates = artifacts.get(video_id, [])
+            destination = canonical_video_artifact_path(
+                root,
+                video_id,
+                suffix,
+            )
             if len(candidates) > 1:
-                locations = ", ".join(str(path) for path in candidates)
-                raise RuntimeError(
-                    f"Duplicate {kind} artifacts for {video_id}: {locations}"
+                canonical_candidates = [
+                    path
+                    for path in candidates
+                    if path.resolve() == destination.resolve()
+                ]
+                if not canonical_candidates or any(
+                    file_digest(path) != file_digest(canonical_candidates[0])
+                    for path in candidates
+                ):
+                    locations = ", ".join(str(path) for path in candidates)
+                    raise RuntimeError(
+                        f"Conflicting {kind} artifacts for {video_id}: {locations}"
+                    )
+                source = canonical_candidates[0]
+                cleanup.extend(
+                    path
+                    for path in candidates
+                    if path.resolve() != source.resolve()
                 )
+                candidates = [source]
             if candidates:
                 source = candidates[0]
-                destination = canonical_video_artifact_path(
-                    root,
-                    video_id,
-                    suffix,
-                )
                 triplet.append((kind, source, destination))
 
         if not triplet:
@@ -75,14 +98,18 @@ def plan_migration(specs=ARTIFACT_SPECS):
             raise RuntimeError(
                 f"Incomplete artifact triplet for {video_id}: {present}"
             )
-        if any(source.resolve() != destination.resolve() for _, source, destination in triplet):
-            plan.append((video_id, triplet))
+        if cleanup or any(
+            source.resolve() != destination.resolve()
+            for _, source, destination in triplet
+        ):
+            plan.append((video_id, MigrationTriplet(triplet, cleanup)))
 
     return plan
 
 
 def migrate_triplet(video_id, triplet):
     staged = []
+    published = []
     try:
         for kind, source, destination in triplet:
             destination.parent.mkdir(parents=True, exist_ok=True)
@@ -99,6 +126,7 @@ def migrate_triplet(video_id, triplet):
 
         for _, _, destination, temp_path in staged:
             os.replace(temp_path, destination)
+            published.append(destination)
 
         for _, source, destination, _ in staged:
             if file_digest(source) != file_digest(destination):
@@ -106,13 +134,22 @@ def migrate_triplet(video_id, triplet):
                     f"Published artifact verification failed: {destination}"
                 )
 
-        for _, source, _, _ in staged:
-            source.unlink()
-
-        print(f"[{video_id}] migrated {len(staged)} artifacts")
+    except Exception:
+        for destination in published:
+            destination.unlink(missing_ok=True)
+        raise
     finally:
         for _, _, _, temp_path in staged:
             temp_path.unlink(missing_ok=True)
+
+    # Cleanup is retry-safe and must not trigger publication rollback.
+    for _, source, _, _ in staged:
+        source.unlink()
+    for redundant_path in getattr(triplet, "cleanup", ()):
+        redundant_path.unlink(missing_ok=True)
+
+    migrated_count = len(staged) + len(getattr(triplet, "cleanup", ()))
+    print(f"[{video_id}] migrated {migrated_count} artifacts")
 
 
 def import_aggregate_captions(
@@ -133,7 +170,7 @@ def import_aggregate_captions(
         video_group(video_id)
         grouped.setdefault(video_id, []).append(record)
 
-    destinations = []
+    pending = []
     for video_id, video_records in sorted(grouped.items()):
         destination = canonical_video_artifact_path(
             caption_root,
@@ -141,14 +178,27 @@ def import_aggregate_captions(
             ".json",
         )
         if destination.exists():
-            raise FileExistsError(
-                f"Cannot import aggregate captions; destination exists: {destination}"
-            )
-        destinations.append(destination)
-        if apply:
-            atomic_write_json(destination, video_records)
+            existing = json.loads(destination.read_text(encoding="utf-8"))
+            if existing != video_records:
+                raise FileExistsError(
+                    f"Cannot import aggregate captions; conflicting destination "
+                    f"exists: {destination}"
+                )
+            continue
+        pending.append((destination, video_records))
 
+    destinations = [destination for destination, _ in pending]
     if apply:
+        written = []
+        try:
+            for destination, video_records in pending:
+                atomic_write_json(destination, video_records)
+                written.append(destination)
+        except Exception:
+            for destination in written:
+                destination.unlink(missing_ok=True)
+            raise
+
         aggregate_path.rename(aggregate_path.with_suffix(".json.migrated"))
     return destinations
 
