@@ -4,7 +4,9 @@
 1. Install the pinned direct dependencies from `requirements.txt`. Install the
    PyTorch CUDA wheel appropriate for the host before loading the VLM.
 2. Place provider artifacts in `data/<video_id>/`, `mapping/`, `objects/`, and
-   `clip-features-32/`.
+   `clip-features-32/`. Keyframe images are also accepted in the grouped
+   layout `data/<group>/<video_id>/`; duplicates across both layouts are
+   rejected.
 3. Review `model_manifest.json`. The supplied visual vectors are expected to be
    normalized `ViT-B-16-SigLIP/webli` embeddings with 768 dimensions.
 4. Migrate legacy caption shards with

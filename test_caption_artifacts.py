@@ -18,7 +18,9 @@ from caption_schema import (
 from migrate_caption_artifacts import migrate_triplet, plan_migration
 from paths import (
     canonical_video_artifact_path,
+    discover_video_image_dirs,
     resolve_video_artifact,
+    resolve_video_image_dir,
     safe_filename_component,
     video_group,
 )
@@ -305,6 +307,44 @@ class CaptionArtifactTest(unittest.TestCase):
             safe_filename_component("../q:01?"),
             "q_01",
         )
+
+    def test_grouped_and_flat_image_layouts_are_resolved(self):
+        data_root = self.root / "data"
+        flat_video = data_root / "L21_V001"
+        flat_video.mkdir(parents=True)
+        (flat_video / "001.jpg").write_bytes(b"flat")
+        grouped_video = data_root / "L27" / "L27_V001"
+        grouped_video.mkdir(parents=True)
+        (grouped_video / "001.jpg").write_bytes(b"grouped")
+
+        self.assertEqual(
+            resolve_video_image_dir("L21_V001", image_root=data_root),
+            flat_video.resolve(),
+        )
+        self.assertEqual(
+            resolve_video_image_dir("L27_V001", image_root=data_root),
+            grouped_video.resolve(),
+        )
+        discovered = discover_video_image_dirs(data_root)
+        self.assertEqual(
+            discovered,
+            {
+                "L21_V001": flat_video,
+                "L27_V001": grouped_video,
+            },
+        )
+
+    def test_duplicate_image_layouts_are_rejected(self):
+        data_root = self.root / "data"
+        flat_video = data_root / "L21_V001"
+        flat_video.mkdir(parents=True)
+        grouped_video = data_root / "L21" / "L21_V001"
+        grouped_video.mkdir(parents=True)
+
+        with self.assertRaisesRegex(RuntimeError, "Duplicate image"):
+            resolve_video_image_dir("L21_V001", image_root=data_root)
+        with self.assertRaisesRegex(RuntimeError, "Duplicate image"):
+            discover_video_image_dirs(data_root)
 
 
 if __name__ == "__main__":

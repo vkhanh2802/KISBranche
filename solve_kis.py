@@ -74,8 +74,7 @@ def finalize_vlm_ranking(candidates, top_k=20, vlm_weight=0.5):
         if isinstance(raw_score, (int, float)) and math.isfinite(raw_score):
             scored_candidates.append((candidate, max(0.0, min(10.0, float(raw_score)))))
 
-    vlm_scores = [score for _, score in scored_candidates]
-    if len(vlm_scores) < 2 or max(vlm_scores) - min(vlm_scores) < 1e-6:
+    if not scored_candidates:
         return sorted(candidates, key=lambda x: x["final_score"], reverse=True), False
 
     for candidate, raw_score in scored_candidates:
@@ -220,7 +219,7 @@ def rerank_candidates_with_vlm(
         vlm_weight=vlm_weight,
     )
     if not vlm_applied:
-        print("[VLM] Scores have insufficient variance; keeping retrieval ranking")
+        print("[VLM] No valid VLM scores; keeping retrieval ranking")
     return ranked
 
 

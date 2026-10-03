@@ -12,6 +12,7 @@ from caption_schema import (
 from paths import (
     CAPTION_DIR,
     DATA_DIR,
+    discover_video_image_dirs,
     resolve_video_artifact,
     stored_path,
     video_caption_path,
@@ -45,10 +46,11 @@ def run_gemini_ocr_all():
     valid_exts = (".jpg", ".jpeg", ".png")
     failures = []
 
-    # Lấy tất cả thư mục video
+    # Lấy tất cả thư mục video (hỗ trợ data/<video_id>/ và
+    # data/<group>/<video_id>/).
     video_folders = sorted(
-        d for d in DATA_DIR.iterdir()
-        if d.is_dir()
+        discover_video_image_dirs(DATA_DIR).values(),
+        key=lambda path: path.name,
     )
 
     print(f"[*] Found {len(video_folders)} video directories.")

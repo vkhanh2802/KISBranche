@@ -68,9 +68,58 @@ def resolve_video_artifact(
     return canonical
 
 
+def resolve_video_image_dir(video_id: str, image_root=DATA_DIR) -> Path:
+    group = video_group(video_id)
+    image_root = Path(image_root)
+    candidates = [
+        path
+        for path in (image_root / video_id, image_root / group / video_id)
+        if path.is_dir()
+    ]
+    unique_candidates = sorted({path.resolve() for path in candidates})
+
+    if len(unique_candidates) > 1:
+        locations = ", ".join(str(path) for path in unique_candidates)
+        raise RuntimeError(
+            f"Duplicate image directories for {video_id}: {locations}"
+        )
+    if unique_candidates:
+        return unique_candidates[0]
+
+    return image_root / video_id
+
+
+def discover_video_image_dirs(image_root=DATA_DIR):
+    image_root = Path(image_root)
+    discovered = {}
+
+    def register(video_id, image_dir):
+        existing = discovered.get(video_id)
+        if existing is not None and existing.resolve() != image_dir.resolve():
+            raise RuntimeError(
+                f"Duplicate image directories for {video_id}: "
+                f"{existing}, {image_dir}"
+            )
+        discovered.setdefault(video_id, image_dir)
+
+    if not image_root.is_dir():
+        return discovered
+
+    for child in sorted(image_root.iterdir()):
+        if child.is_dir() and VIDEO_ID_PATTERN.fullmatch(child.name):
+            register(child.name, child)
+
+    for child in sorted(image_root.iterdir()):
+        if child.is_dir() and not VIDEO_ID_PATTERN.fullmatch(child.name):
+            for subdir in sorted(child.iterdir()):
+                if subdir.is_dir() and VIDEO_ID_PATTERN.fullmatch(subdir.name):
+                    register(subdir.name, subdir)
+
+    return discovered
+
+
 def video_image_dir(video_id: str) -> Path:
-    video_group(video_id)
-    return DATA_DIR / video_id
+    return resolve_video_image_dir(video_id)
 
 
 def video_csv_path(video_id: str) -> Path:

@@ -98,10 +98,14 @@ def normalize_caption_record(record, video_id, frame_mapping=None):
 
     image_path = str(normalized.get("image_path", "")).replace("\\", "/")
     parsed_path = PurePosixPath(image_path)
+    group = video_group(video_id)
+    flat_layout = parsed_path.parts[:2] == ("data", video_id)
+    grouped_layout = parsed_path.parts[:3] == ("data", group, video_id)
     if (
         parsed_path.is_absolute()
         or ".." in parsed_path.parts
-        or parsed_path.parts[:2] != ("data", video_id)
+        or not (flat_layout or grouped_layout)
+        or len(parsed_path.parts) < 3
     ):
         raise ValueError(f"Unsafe image_path for {video_id}: {image_path!r}")
     normalized["image_path"] = parsed_path.as_posix()

@@ -18,6 +18,7 @@ from paths import (
     DATA_DIR,
     MAPPING_DIR,
     canonical_video_artifact_path,
+    discover_video_image_dirs,
     resolve_video_artifact,
     stored_path,
 )
@@ -97,18 +98,26 @@ def generate_captions_with_mapping(
     
     # Gom toàn bộ công việc cần làm vào 1 danh sách
     valid_extensions = (".jpg", ".jpeg", ".png")
-    video_folders = sorted(
-        d for d in os.listdir(image_root) if os.path.isdir(os.path.join(image_root, d))
-    )
+    discovered = discover_video_image_dirs(image_root)
     if video_ids is not None:
-        video_folders = [v for v in video_folders if v in video_ids]
+        requested = set(video_ids)
+        missing = sorted(requested - set(discovered))
+        if missing:
+            raise FileNotFoundError(
+                f"Missing image directories: {', '.join(missing)}"
+            )
+        discovered = {
+            video_id: discovered[video_id]
+            for video_id in sorted(requested)
+        }
+    video_folders = sorted(discovered)
 
     tasks_to_run = []
     caption_data_by_video = {}
     output_path_by_video = {}
     processed = set()
     for video_id in video_folders:
-        image_dir = os.path.join(image_root, video_id)
+        image_dir = discovered[video_id]
         csv_path = csv_root / f"{video_id}.csv"
         if not csv_path.is_file():
             continue
@@ -142,6 +151,13 @@ def generate_captions_with_mapping(
             for record in caption_data
         ]
         validate_unique_caption_records(caption_data, video_id)
+        # Drop placeholder records without usable text (e.g. OCR-created
+        # stubs) so their keyframes are regenerated instead of skipped.
+        caption_data = [
+            item
+            for item in caption_data
+            if (item.get("retrieval_text") or item.get("caption"))
+        ]
         caption_data_by_video[video_id] = caption_data
         output_path_by_video[video_id] = canonical_output
         processed.update(

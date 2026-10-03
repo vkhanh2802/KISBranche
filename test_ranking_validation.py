@@ -7,6 +7,7 @@ from model_config import milvus_model_properties
 from search_clip import validate_collection_model
 from solve_kis import (
     console_safe_text,
+    finalize_vlm_ranking,
     normalize_scores,
     static_weight_fusion_3_way,
 )
@@ -53,6 +54,42 @@ class RankingValidationTest(unittest.TestCase):
     def test_fusion_weights_must_sum_to_one(self):
         with self.assertRaisesRegex(ValueError, "sum to 1"):
             static_weight_fusion_3_way([], [], [], 0.5, 0.5, 0.5)
+
+    def test_identical_vlm_scores_still_apply_bounded_boost(self):
+        candidates = [
+            {"video_id": "V1", "frame_id": 1, "score": 0.6054},
+            {"video_id": "V2", "frame_id": 2, "score": 0.5456, "vlm_raw_score": 8.0},
+            {"video_id": "V3", "frame_id": 3, "score": 0.49, "vlm_raw_score": 8.0},
+        ]
+
+        ranked, applied = finalize_vlm_ranking(
+            candidates,
+            top_k=3,
+            vlm_weight=0.5,
+        )
+
+        self.assertTrue(applied)
+        self.assertEqual([item["frame_id"] for item in ranked], [2, 3, 1])
+        self.assertAlmostEqual(ranked[0]["final_score"], 0.68192, places=4)
+        self.assertAlmostEqual(ranked[1]["final_score"], 0.643, places=4)
+        self.assertEqual(ranked[2]["final_score"], 0.6054)
+
+    def test_single_vlm_score_applies_bounded_boost(self):
+        candidates = [
+            {"video_id": "V1", "frame_id": 1, "score": 0.7},
+            {"video_id": "V2", "frame_id": 2, "score": 0.5, "vlm_raw_score": 10.0},
+        ]
+
+        ranked, applied = finalize_vlm_ranking(
+            candidates,
+            top_k=2,
+            vlm_weight=0.5,
+        )
+
+        self.assertTrue(applied)
+        self.assertEqual([item["frame_id"] for item in ranked], [2, 1])
+        self.assertAlmostEqual(ranked[0]["final_score"], 0.75, places=4)
+        self.assertEqual(ranked[1]["final_score"], 0.7)
 
     def test_milvus_model_metadata_must_match_manifest(self):
         client = Mock()
