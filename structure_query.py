@@ -5,7 +5,6 @@ import os
 from pathlib import Path
 import re
 import sys
-
 from artifact_io import atomic_write_json
 from model_config import QUERY_STRUCTURING_CONFIG
 from paths import KIS_ROOT

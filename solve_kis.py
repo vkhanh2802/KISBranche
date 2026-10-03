@@ -40,6 +40,34 @@ def reciprocal_rank_fusion(multi_results, k=60):
     fused.sort(key=lambda x: x["score"], reverse=True)
     return fused
 
+
+def max_score_fusion(multi_results):
+    """Gộp các biến thể truy vấn của CÙNG 1 luồng bằng điểm max.
+
+    Khác với RRF (thưởng frame xuất hiện đều ở nhiều variants),
+    max giữ lại "đỉnh nhọn": frame khớp mạnh 1 variant chi tiết
+    không bị chôn bởi frame khớp nhàng nhiều variants chung chung.
+    Điểm thô trong cùng 1 luồng so sánh được trực tiếp
+    (cùng encoder/index/metric).
+    """
+    best_scores = {}
+    metadata = {}
+    for results in multi_results:
+        for item in results:
+            key = (item["video_id"], item["frame_id"])
+            score = float(item["score"])
+            if key not in best_scores or score > best_scores[key]:
+                best_scores[key] = score
+                metadata[key] = item
+
+    fused = []
+    for key, score in best_scores.items():
+        item = metadata[key].copy()
+        item["score"] = score
+        fused.append(item)
+    fused.sort(key=lambda x: x["score"], reverse=True)
+    return fused
+
 def normalize_scores(results):
     """Bắt buộc chuẩn hóa điểm số về [0, 1] trước khi Fusion tĩnh"""
     if not results: return []
@@ -249,7 +277,7 @@ def solve_kis(
         visual_retriever,
         top_k=retrieval_top_k,
     )
-    visual_results = normalize_scores(reciprocal_rank_fusion(visual_multi))
+    visual_results = normalize_scores(max_score_fusion(visual_multi))
 
     # 3. Luồng 2: Text Search (BM25 - Khớp từ khóa cứng)
     bm25_multi = []
@@ -258,7 +286,7 @@ def solve_kis(
         bm25_multi.append(
             text_bm25_retriever.search_bm25(q, top_k=retrieval_top_k)
         )
-    bm25_results = normalize_scores(reciprocal_rank_fusion(bm25_multi))
+    bm25_results = normalize_scores(max_score_fusion(bm25_multi))
 
     # 4. Luồng 3: Semantic Text Search (Tìm kiếm ngữ nghĩa Vector)
     semantic_multi = []
@@ -267,7 +295,7 @@ def solve_kis(
         semantic_multi.append(
             text_semantic_retriever.search(q, top_k=retrieval_top_k)
         )
-    semantic_results = normalize_scores(reciprocal_rank_fusion(semantic_multi))
+    semantic_results = normalize_scores(max_score_fusion(semantic_multi))
 
     # 5. Dung hợp 3 luồng
     candidates = static_weight_fusion_3_way(

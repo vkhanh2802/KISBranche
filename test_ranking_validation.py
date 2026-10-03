@@ -8,6 +8,7 @@ from search_clip import validate_collection_model
 from solve_kis import (
     console_safe_text,
     finalize_vlm_ranking,
+    max_score_fusion,
     normalize_scores,
     static_weight_fusion_3_way,
 )
@@ -73,6 +74,22 @@ class RankingValidationTest(unittest.TestCase):
         self.assertAlmostEqual(ranked[0]["final_score"], 0.68192, places=4)
         self.assertAlmostEqual(ranked[1]["final_score"], 0.643, places=4)
         self.assertEqual(ranked[2]["final_score"], 0.6054)
+
+    def test_max_fusion_preserves_single_variant_spike(self):
+        spike = {"video_id": "V1", "frame_id": 1, "score": 0.9}
+        filler_a = {"video_id": "V2", "frame_id": 2, "score": 0.5}
+        filler_b = {"video_id": "V2", "frame_id": 2, "score": 0.45}
+        fused = max_score_fusion([[spike], [filler_a], [filler_b]])
+
+        # RRF would rank V2 (two appearances) above the one-off V1 spike;
+        # max keeps the spike on top with its raw score and metadata.
+        self.assertEqual(
+            [(item["video_id"], item["score"]) for item in fused],
+            [("V1", 0.9), ("V2", 0.5)],
+        )
+
+    def test_max_fusion_empty_input(self):
+        self.assertEqual(max_score_fusion([]), [])
 
     def test_single_vlm_score_applies_bounded_boost(self):
         candidates = [
