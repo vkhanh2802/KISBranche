@@ -22,8 +22,9 @@
    collection with `python build_milvus.py build`. Use
    `python build_milvus.py rebuild` for a staged replacement.
 9. Set `GEMINI_API_KEY` and convert a natural-language query with
-   `python structure_query.py "<query>" --query-id q_058 --output test.json`.
-   This sends only the query text to Gemini and writes validated JSON atomically.
+   `python structure_query.py "<query>" --query-id q_058`.
+   This sends only the query text to Gemini and atomically writes the ignored
+   runtime artifact `structured_query.json`.
 10. Run the retrieval pipeline from `runbranch.ipynb`.
 
 Canonical caption artifacts are stored as:

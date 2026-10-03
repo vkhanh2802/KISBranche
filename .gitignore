@@ -22,6 +22,7 @@ venv/
 /caption_generator/
 /caption_mapping/
 /index/
+/structured_query.json
 
 # Generated data and model files
 *.csv
