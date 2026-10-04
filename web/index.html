@@ -1,0 +1,98 @@
+<!doctype html>
+<html lang="vi">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="description" content="KIS video keyframe retrieval interface">
+  <title>KIS Framefinder</title>
+  <link rel="stylesheet" href="/assets/styles.css">
+  <script src="/assets/app.js" defer></script>
+</head>
+<body>
+  <header class="masthead">
+    <a class="brand" href="/" aria-label="KIS Framefinder home">
+      <span class="brand-mark">KIS</span>
+      <span class="brand-name">Framefinder</span>
+    </a>
+    <div class="system-state" id="system-state">
+      <span class="state-dot" aria-hidden="true"></span>
+      <span id="state-text">Chưa nạp model</span>
+    </div>
+  </header>
+
+  <main>
+    <section class="search-hero" aria-labelledby="page-title">
+      <div class="hero-index" aria-hidden="true">01 / SEARCH</div>
+      <h1 id="page-title">Tìm đúng khoảnh khắc<br>trong kho video.</h1>
+      <form id="search-form" class="search-form">
+        <label for="query">Mô tả cảnh bạn cần tìm</label>
+        <div class="query-shell">
+          <textarea
+            id="query"
+            name="query"
+            rows="3"
+            maxlength="8000"
+            placeholder="Ví dụ: Hai người ngồi trên thuyền, người đàn ông mặc áo xanh và đội mũ trắng..."
+            required
+          ></textarea>
+          <div class="query-actions">
+            <span id="char-count" class="char-count">0 / 8000</span>
+            <button id="search-button" type="submit">
+              <span>Tìm top 20</span>
+              <span aria-hidden="true">↗</span>
+            </button>
+          </div>
+        </div>
+        <p class="search-note">Lần tìm đầu tiên sẽ lâu hơn vì hệ thống cần nạp model và index vào RAM.</p>
+      </form>
+    </section>
+
+    <section id="loading" class="loading-panel" hidden aria-live="polite">
+      <div class="loader" aria-hidden="true"><span></span><span></span><span></span></div>
+      <div>
+        <strong id="loading-title">Đang phân tích và tìm kiếm</strong>
+        <p>Giữ trang này mở. SigLIP, caption retrieval và VLM đang xử lý truy vấn.</p>
+      </div>
+    </section>
+
+    <section id="error-panel" class="error-panel" hidden role="alert">
+      <span>SEARCH ERROR</span>
+      <p id="error-message"></p>
+    </section>
+
+    <section id="results-section" class="results-section" hidden aria-labelledby="results-title">
+      <div class="results-heading">
+        <div>
+          <div class="hero-index">02 / RESULTS</div>
+          <h2 id="results-title">Top 20 frames</h2>
+        </div>
+        <div class="run-meta">
+          <span id="result-count">0 kết quả</span>
+          <span id="elapsed-time">0.00 giây</span>
+        </div>
+      </div>
+
+      <details class="query-details">
+        <summary>Query variants hệ thống đã dùng</summary>
+        <ol id="query-variants"></ol>
+      </details>
+
+      <div id="results-grid" class="results-grid"></div>
+    </section>
+  </main>
+
+  <dialog id="preview-dialog" class="preview-dialog">
+    <button id="close-preview" class="close-preview" type="button" aria-label="Đóng ảnh">×</button>
+    <img id="preview-image" alt="">
+    <div class="preview-meta">
+      <strong id="preview-location"></strong>
+      <span id="preview-caption"></span>
+    </div>
+  </dialog>
+
+  <footer>
+    <span>KIS RETRIEVAL SYSTEM</span>
+    <span>VISUAL · BM25 · SEMANTIC · VLM</span>
+  </footer>
+</body>
+</html>

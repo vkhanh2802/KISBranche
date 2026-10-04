@@ -28,6 +28,11 @@
    This sends only the query text to Gemini and atomically writes the ignored
    runtime artifact `structured_query.json`.
 10. Run the retrieval pipeline from `runbranch.ipynb`.
+11. To use the web interface, run `python web_app.py` in the same environment,
+    then open `http://127.0.0.1:8000`. The first search loads the models and
+    indexes; later searches reuse them from memory. Run one server worker so the
+    GPU model is not duplicated. Set `KIS_DISABLE_VLM=1` before starting the
+    server only when retrieval without VLM reranking is desired.
 
 Canonical caption artifacts are stored as:
 
