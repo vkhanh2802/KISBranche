@@ -1,4 +1,3 @@
-from collections import defaultdict
 import math
 from pathlib import Path
 import sys
@@ -21,25 +20,6 @@ def multi_query_search(query_variants, encoder, retriever, top_k=50):
         results = retriever.search(vector, top_k=top_k)
         all_results.append(results)
     return all_results
-
-def reciprocal_rank_fusion(multi_results, k=60):
-    """Gộp các biến thể truy vấn của CÙNG 1 luồng"""
-    scores = defaultdict(float)
-    metadata = {}
-    for results in multi_results:
-        for rank, item in enumerate(results):
-            key = (item["video_id"], item["frame_id"])
-            scores[key] += 1.0 / (k + rank + 1)
-            metadata[key] = item
-
-    fused = []
-    for key, score in scores.items():
-        item = metadata[key].copy()
-        item["score"] = score
-        fused.append(item)
-    fused.sort(key=lambda x: x["score"], reverse=True)
-    return fused
-
 
 def max_score_fusion(multi_results):
     """Gộp các biến thể truy vấn của CÙNG 1 luồng bằng điểm max.

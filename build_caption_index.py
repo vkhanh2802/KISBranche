@@ -1,5 +1,6 @@
 import argparse
 import json
+from pathlib import Path
 
 import faiss
 import numpy as np
@@ -15,19 +16,17 @@ from caption_schema import (
 from model_config import CAPTION_CONFIG
 from paths import (
     CAPTION_DIR,
-    CAPTION_MAPPING_DIR,
-    INDEX_DIR,
-    video_caption_index_path,
-    video_caption_mapping_path,
-    video_caption_path,
+    KIS_ROOT,
+    MAPPING_DIR,
+    canonical_video_artifact_path,
 )
 
 CAPTION_MODEL = CAPTION_CONFIG["model"]
 
 
-def collect_caption_files():
+def collect_caption_files(caption_dir=CAPTION_DIR):
     caption_files = {}
-    for path in sorted(CAPTION_DIR.rglob("L*_V*.json")):
+    for path in sorted(Path(caption_dir).rglob("L*_V*.json")):
         if not path.is_file():
             continue
         if path.stem in caption_files:
@@ -39,13 +38,13 @@ def collect_caption_files():
     return caption_files
 
 
-def load_normalized_captions(video_id, caption_path):
+def load_normalized_captions(video_id, caption_path, mapping_dir=MAPPING_DIR):
     with caption_path.open("r", encoding="utf-8") as file:
         records = json.load(file)
     if not isinstance(records, list) or not records:
         raise ValueError(f"Caption file must be a non-empty array: {caption_path}")
 
-    frame_mapping = load_frame_mapping(video_id)
+    frame_mapping = load_frame_mapping(video_id, mapping_dir)
     normalized = [
         normalize_caption_record(record, video_id, frame_mapping)
         for record in records
@@ -63,7 +62,7 @@ def load_normalized_captions(video_id, caption_path):
     return normalized, texts
 
 
-def write_caption_artifacts(video_id, records, embeddings):
+def write_caption_artifacts(video_id, records, embeddings, project_root=KIS_ROOT):
     mapping = [
         {
             "video_id": item["video_id"],
@@ -77,9 +76,10 @@ def write_caption_artifacts(video_id, records, embeddings):
     index = faiss.IndexFlatIP(embeddings.shape[1])
     index.add(embeddings)
 
-    index_path = video_caption_index_path(video_id)
-    mapping_path = video_caption_mapping_path(video_id)
-    caption_path = video_caption_path(video_id)
+    project_root = Path(project_root)
+    index_path = canonical_video_artifact_path(project_root / "index", video_id, ".index")
+    mapping_path = canonical_video_artifact_path(project_root / "caption_mapping", video_id, ".json")
+    caption_path = canonical_video_artifact_path(project_root / "caption_generator", video_id, ".json")
     temp_index_path = temporary_path(index_path)
     temp_mapping_path = temporary_path(mapping_path)
     temp_caption_path = temporary_path(caption_path)
@@ -107,12 +107,15 @@ def write_caption_artifacts(video_id, records, embeddings):
         mapping_path,
         index_path,
         len(records),
+        manifest_path=index_path.with_suffix(".meta.json"),
     )
     return index_path, mapping_path, manifest_path
 
 
-def build_caption_index(video_ids=None):
-    caption_files = collect_caption_files()
+def build_caption_index(video_ids=None, project_root=KIS_ROOT, device=None, batch_size=32):
+    project_root = Path(project_root)
+    caption_dir = project_root / "caption_generator"
+    caption_files = collect_caption_files(caption_dir)
     if video_ids is not None:
         requested = set(video_ids)
         missing = sorted(requested - set(caption_files))
@@ -124,28 +127,29 @@ def build_caption_index(video_ids=None):
         }
 
     if not caption_files:
-        raise FileNotFoundError(f"No per-video captions found in {CAPTION_DIR}")
+        raise FileNotFoundError(f"No per-video captions found in {caption_dir}")
 
-    INDEX_DIR.mkdir(parents=True, exist_ok=True)
-    CAPTION_MAPPING_DIR.mkdir(parents=True, exist_ok=True)
+    (project_root / "index").mkdir(parents=True, exist_ok=True)
+    (project_root / "caption_mapping").mkdir(parents=True, exist_ok=True)
     print(f"[Caption] Found {len(caption_files)} per-video caption files")
     print(f"[Caption] Loading {CAPTION_MODEL}...")
     model = SentenceTransformer(
         CAPTION_MODEL,
         revision=CAPTION_CONFIG["revision"],
+        device=device,
     )
 
     built = 0
     skipped = []
     total_records = 0
     for video_id, caption_path in sorted(caption_files.items()):
-        canonical_caption_path = video_caption_path(video_id)
+        canonical_caption_path = canonical_video_artifact_path(caption_dir, video_id, ".json")
         if caption_path.resolve() != canonical_caption_path.resolve():
             raise RuntimeError(
                 f"Legacy caption path detected for {video_id}: {caption_path}. "
                 "Run migrate_caption_artifacts.py --apply first."
             )
-        records, texts = load_normalized_captions(video_id, caption_path)
+        records, texts = load_normalized_captions(video_id, caption_path, project_root / "mapping")
         if texts is None:
             skipped.append(video_id)
             print(f"[{video_id}] skipped: no searchable caption text")
@@ -153,7 +157,7 @@ def build_caption_index(video_ids=None):
 
         embeddings = model.encode(
             texts,
-            batch_size=32,
+            batch_size=batch_size,
             show_progress_bar=False,
             convert_to_numpy=True,
         ).astype(np.float32)
@@ -163,6 +167,7 @@ def build_caption_index(video_ids=None):
             video_id,
             records,
             embeddings,
+            project_root=project_root,
         )
         built += 1
         total_records += len(records)

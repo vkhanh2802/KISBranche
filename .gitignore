@@ -24,6 +24,9 @@ venv/
 /index/
 /structured_query.json
 /volumes/
+/video/
+/preparation/
+/cpu_smoke/
 
 # Generated data and model files
 *.csv

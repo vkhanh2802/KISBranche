@@ -49,8 +49,13 @@ def write_caption_manifest(
     mapping_path,
     index_path,
     count,
+    manifest_path=None,
 ):
-    manifest_path = video_caption_manifest_path(video_id)
+    manifest_path = (
+        Path(manifest_path)
+        if manifest_path is not None
+        else video_caption_manifest_path(video_id)
+    )
     atomic_write_json(
         manifest_path,
         manifest_data(

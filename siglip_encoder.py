@@ -15,7 +15,7 @@ class SiglipEncoder:
             revision=VISUAL_CONFIG["hf_revision"],
         )
         weights_path = snapshot_path + "/open_clip_model.safetensors"
-        self.model, _, _ = open_clip.create_model_and_transforms(
+        self.model, _, self.image_preprocess = open_clip.create_model_and_transforms(
             VISUAL_CONFIG["model"],
             pretrained=weights_path,
         )
@@ -37,3 +37,13 @@ class SiglipEncoder:
 
         vector = vector.cpu().numpy().astype("float32")
         return vector[0]
+
+    def encode_images(self, images):
+        """Encode RGB PIL images with the same pinned SigLIP as text search."""
+        if not images:
+            return numpy.empty((0, int(VISUAL_CONFIG["dimension"])), dtype="float32")
+        inputs = torch.stack([self.image_preprocess(image) for image in images])
+        with torch.inference_mode():
+            vectors = self.model.encode_image(inputs.to(self.device))
+            vectors = torch.nn.functional.normalize(vectors.float(), dim=-1)
+        return vectors.cpu().numpy().astype("float32")

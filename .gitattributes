@@ -1,0 +1,9 @@
+# Keep source files portable between Windows development and the Linux CPU server.
+*.py text eol=lf
+*.ipynb text eol=lf
+*.md text eol=lf
+*.txt text eol=lf
+*.yml text eol=lf
+*.yaml text eol=lf
+.gitignore text eol=lf
+.env.example text eol=lf

@@ -12,22 +12,22 @@ def temporary_path(destination: Path) -> Path:
     )
 
 
-def write_json(path: Path, data) -> None:
+def write_json(path: Path, data, indent=2) -> None:
     path = Path(path)
     path.parent.mkdir(parents=True, exist_ok=True)
     with path.open("w", encoding="utf-8") as file:
-        json.dump(data, file, ensure_ascii=False, indent=2)
+        json.dump(data, file, ensure_ascii=False, indent=indent)
         file.flush()
         os.fsync(file.fileno())
 
 
-def atomic_write_json(destination: Path, data) -> None:
+def atomic_write_json(destination: Path, data, indent=2) -> None:
     destination = Path(destination)
     destination.parent.mkdir(parents=True, exist_ok=True)
     temp_path = temporary_path(destination)
 
     try:
-        write_json(temp_path, data)
+        write_json(temp_path, data, indent=indent)
         os.replace(temp_path, destination)
     finally:
         temp_path.unlink(missing_ok=True)

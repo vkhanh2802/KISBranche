@@ -16,11 +16,11 @@ from model_config import CAPTION_GENERATION_CONFIG
 from paths import (
     CAPTION_DIR,
     DATA_DIR,
+    KIS_ROOT,
     MAPPING_DIR,
     canonical_video_artifact_path,
     discover_video_image_dirs,
     resolve_video_artifact,
-    stored_path,
 )
 
 # 2. DATASET CHO BATCH PROCESSING
@@ -90,6 +90,8 @@ def generate_captions_with_mapping(
     video_ids=None,
     batch_size=16, # Điều chỉnh batch size tùy VRAM (VD: 8, 16, 32)
     num_workers=4,
+    device=None,
+    path_root=KIS_ROOT,
 ):
     image_root = os.fspath(image_root)
     csv_root = Path(csv_root)
@@ -215,8 +217,8 @@ def generate_captions_with_mapping(
         revision=vqa_revision,
     )
 
-    device = "cuda" if torch.cuda.is_available() else "cpu"
-    if device == "cuda":
+    device = torch.device(device or ("cuda" if torch.cuda.is_available() else "cpu"))
+    if device.type == "cuda":
         cap_model = cap_model.half().to(device)
         vqa_model = vqa_model.half().to(device)
     else:
@@ -276,7 +278,9 @@ def generate_captions_with_mapping(
                     "video_id": meta["video_id"],
                     "frame_id": meta["frame_id"],
                     "keyframe_n": meta["keyframe_n"],
-                    "image_path": stored_path(Path(meta["img_path"])),
+                    "image_path": Path(meta["img_path"]).resolve().relative_to(
+                        Path(path_root).resolve()
+                    ).as_posix(),
                     "caption": gen_cap,
                     "vqa_answers": answers,
                     "details": details_text,
@@ -289,6 +293,7 @@ def generate_captions_with_mapping(
             print(f"[*] Processed batch {save_counter}/{-(-len(tasks_to_run)//batch_size)}")
 
             for video_id in affected_videos:
+                caption_data_by_video[video_id].sort(key=lambda item: item["keyframe_n"])
                 atomic_write_json(
                     output_path_by_video[video_id],
                     caption_data_by_video[video_id],

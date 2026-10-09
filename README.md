@@ -25,9 +25,9 @@ caption_mapping/         # có thể tự build
 index/                   # có thể tự build
 ```
 
-Project hiện tại không có bước tách raw video thành keyframe, tạo file mapping
-hoặc sinh `clip-features-32/*.npy`. Do đó `data/`, `mapping/` và
-`clip-features-32/` là ba đầu vào bắt buộc phải nhận từ nhà cung cấp dataset.
+Nếu nhận artifact từ nhà cung cấp, cần tối thiểu `data/`, `mapping/` và
+`clip-features-32/`. Nếu có video gốc mới, có thể tự sinh đầy đủ artifact bằng
+[`prepare_videos_cpu.ipynb`](prepare_videos_cpu.ipynb) theo hướng dẫn CPU bên dưới.
 
 Milvus cũng là thành phần bắt buộc. Cách tái lập dễ nhất là dùng Docker Compose
 đã được kèm trong repository. Nếu đã có Milvus v3 tương thích đang nghe tại
@@ -144,6 +144,136 @@ index/<group>/<video_id>.meta.json
 ```
 
 Không commit các thư mục trên vào Git nếu không có quyền phân phối dataset.
+
+### Chuẩn bị video mới trên server CPU
+
+Notebook `prepare_videos_cpu.ipynb` nhận các video trong `video/`, kể cả folder
+con, và sinh đủ artifact tương thích với pipeline tìm kiếm. Tên video phải theo
+dạng `L20_V001.mp4`, `L31_V001.mp4`, v.v.; `video_id` lấy từ tên file. Không dùng
+cùng tên cho hai video khác nhau hoặc ghi đè artifact của dataset cũ.
+
+Flow:
+
+```text
+video/<video_id>.mp4
+  ├── data/<group>/<video_id>/001.jpg, ...
+  ├── mapping/<video_id>.csv
+  ├── clip-features-32/<video_id>.npy            # SigLIP, float32, L2, (N,768)
+  ├── objects/<video_id>/001.json, ...           # SSDLite MobileNetV3, COCO
+  ├── caption_generator/<group>/<video_id>.json  # BLIP caption + VQA
+  ├── caption_mapping/<group>/<video_id>.json
+  ├── index/<group>/<video_id>.index             # MiniLM, 384 chiều
+  ├── index/<group>/<video_id>.meta.json          # SHA-256 + model provenance
+  └── preparation/<group>/<video_id>.json        # nguồn, cấu hình, checkpoint
+```
+
+Trong VS Code **Remote-SSH**, mở repository trên server và chọn Python/kernel
+của server. Việc kết nối OpenVPN giúp truy cập mạng; tính toán chạy tại nơi
+kernel Python được chọn. Cell đầu notebook kiểm tra hostname/Linux để phát hiện
+kernel chọn nhầm.
+
+Môi trường CPU có dependency riêng trong `requirements-video-cpu.txt`, dùng
+PyTorch CPU và không cần bitsandbytes/Qwen/Gemini để chuẩn bị video. Với server
+chưa có Python 3.11 hoặc pip, có thể cài môi trường riêng bằng uv, không cần sudo:
+
+```bash
+# Chạy trong thư mục repository trên server.
+curl -LsSf https://astral.sh/uv/install.sh | sh
+source "$HOME/.local/bin/env"
+uv python install 3.11
+uv venv .venv --python 3.11 --seed
+uv pip install --python .venv/bin/python -r requirements-video-cpu.txt
+.venv/bin/python -m ipykernel install --user --name kis-video-cpu --display-name KIS-Video-CPU
+```
+
+Nếu môi trường `.venv` đã có sẵn thì bỏ qua bước tạo lại. Trong notebook chọn
+kernel **KIS-Video-CPU** hoặc `.venv/bin/python`, rồi:
+
+1. Kiểm tra `PROJECT_DIR` và `EXPECTED_HOSTNAME` ở cell cấu hình.
+2. Đặt video vào `video/`, chọn `VIDEO_IDS` hoặc dùng `None` cho toàn bộ video.
+3. Giữ `SMOKE_MODE=True` lần đầu: xử lý 12 giây/video và lưu riêng vào
+   `cpu_smoke/random_80_160_seed_42/`.
+4. Chạy các cell đến validation; mọi video phải có trạng thái `OK`.
+5. Đổi `SMOKE_MODE=False`, chạy lại từ cấu hình để build toàn bộ video vào repo.
+
+Keyframe mặc định lấy frame 0, rồi sau mỗi ảnh chọn ngẫu nhiên khoảng cách
+**80–160 frame** (bao gồm cả hai đầu) để lấy ảnh tiếp theo. `KEYFRAME_MIN_GAP`,
+`KEYFRAME_MAX_GAP` và `RANDOM_SEED` nằm ở cell cấu hình notebook. Seed kết hợp
+video_id giúp cùng video/cấu hình cho ra cùng bộ keyframe khi chạy lại. Lấy mẫu
+theo số frame nên video 25 FPS và 30 FPS có khoảng cách thời gian khác nhau;
+chế độ này không thêm ảnh tại chuyển cảnh. `frame_idx` là số frame decode thật,
+bắt đầu từ 0; `pts_time` dùng PTS khi có và có fallback theo FPS. Schema đầu ra
+vẫn tương thích với corpus cũ.
+
+Object detector mới dùng bộ nhãn COCO 80 lớp, khác bộ Open Images của artifact
+provider. JSON đầu ra có **đúng 5 field và kiểu dữ liệu của corpus chính**:
+
+```json
+{
+  "detection_scores": ["0.9"],
+  "detection_class_names": ["/m/019jd"],
+  "detection_class_entities": ["Boat"],
+  "detection_boxes": [["0.1", "0.2", "0.8", "0.9"]],
+  "detection_class_labels": ["43"]
+}
+```
+
+Mã MID, tên và label index được ánh xạ bằng `object_label_map.json`, kiểm chứng
+với bảng class chính thức của Open Images. Box là chuỗi tọa độ normalized theo
+`ymin,xmin,ymax,xmax`. JSON objects không chứa metadata phụ; identity, model và
+checksum được lưu riêng trong `preparation/<group>/<video_id>.json`.
+Detector vẫn dự đoán nhãn COCO; nhãn không có ánh xạ đúng (hiện là `cup`) được
+bỏ qua. Số detection tùy ảnh/threshold, tối đa 100; không padding prediction giả
+để bắt chước số lượng của provider.
+
+Kiểm tra format từng folder sau khi build xong:
+
+```bash
+.venv/bin/python audit_artifact_formats.py --video-id L20_V001
+```
+
+Khi đang xử lý hoặc mới có một số checkpoint, thêm `--allow-incomplete` để các
+artifact chưa hoàn tất được báo `PENDING` thay vì coi là lỗi format. Notebook
+cũng hiển thị bảng audit của đủ 7 folder ở bước validation.
+
+Nếu có objects được tạo bởi phiên bản pipeline cũ, chuyển schema mà không cần
+chạy lại detector:
+
+```bash
+.venv/bin/python prepare_video_data.py --video-id L20_V001 --stages object-format
+```
+
+Bước này chỉ chuyển output có provenance của pipeline, không chuyển/ghi đè
+artifact provider chưa xác định nguồn.
+
+Notebook giới hạn CPU threads (mặc định tối đa 8), batch visual/object là 2,
+caption batch là 1, DataLoader workers là 0. Caption + 7 câu hỏi VQA thường là
+bước chậm nhất trên CPU; có checkpoint sau mỗi batch để tiếp tục nếu bị ngắt.
+Các model được tải tuần tự từng stage để giảm peak RAM.
+
+Cũng có thể chạy không cần notebook:
+
+```bash
+.venv/bin/python prepare_video_data.py --video-id L20_V001 --frame-range 80 160 --seed 42 --threads 8
+```
+
+Smoke test riêng:
+
+```bash
+.venv/bin/python prepare_video_data.py --video-id L20_V001 --frame-range 80 160 --seed 42 --output-root cpu_smoke/random_80_160_seed_42 --max-duration 12 --threads 8
+```
+
+Sau full build, copy/merge các artifact sang máy đang chạy retrieval nếu đó là
+máy khác, rồi chạy `python build_milvus.py rebuild` tại máy có Milvus và đầy đủ
+visual features của cả corpus. Nếu Milvus rỗng dùng `build`. Khởi động lại web
+app/kernel retrieval để nạp caption/BM25 của video mới. Tạo artifact trên CPU
+không bắt buộc server phải có Docker hay Milvus.
+
+Kiểm thử ingestion bằng video tổng hợp nhỏ (không tải model):
+
+```bash
+.venv/bin/python -m unittest test_prepare_video_data -v
+```
 
 ## 4. Khởi động Milvus bằng Docker Compose
 

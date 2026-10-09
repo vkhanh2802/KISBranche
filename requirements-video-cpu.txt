@@ -1,0 +1,17 @@
+# CPU-only environment for prepare_videos_cpu.ipynb (Python 3.11).
+--extra-index-url https://download.pytorch.org/whl/cpu
+torch==2.7.1+cpu
+torchvision==0.22.1+cpu
+numpy==2.4.4
+pandas==3.0.3
+faiss-cpu==1.12.0
+pymilvus==3.0.1
+sentence-transformers==5.7.0
+transformers==5.15.0
+open-clip-torch==3.3.0
+huggingface-hub==1.27.0
+Pillow==11.1.0
+rank-bm25==0.2.2
+av==15.1.0
+ipykernel==7.2.0
+nbformat==5.11.1
